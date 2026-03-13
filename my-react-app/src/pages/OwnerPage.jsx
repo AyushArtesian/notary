@@ -104,7 +104,7 @@ const OwnerPage = () => {
 
   const handleCopyNotaryLink = () => {
     if (!sessionId) return;
-    const url = `${window.location.origin}${window.location.pathname}?role=notary&sessionId=${sessionId}`;
+    const url = `${window.location.origin}/notary?role=notary&sessionId=${sessionId}`;
     navigator.clipboard.writeText(url).then(() => {
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2500);
