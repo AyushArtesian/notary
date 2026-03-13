@@ -40,6 +40,8 @@ const HomePage = () => {
       } else {
         navigate("/notary");
       }
+    } else if (role === "admin") {
+      navigate("/admin");
     }
   };
 
@@ -135,6 +137,40 @@ const HomePage = () => {
             <span style={{ fontSize: "32px" }}>✍️</span>
             <span>
               I am a <strong>Notary</strong>
+            </span>
+          </button>
+
+          {/* Admin Button */}
+          <button
+            onClick={() => handleSelectRole("admin")}
+            style={{
+              padding: "20px 40px",
+              fontSize: "18px",
+              fontWeight: "bold",
+              backgroundColor: "#9C27B0",
+              color: "white",
+              border: "none",
+              borderRadius: "8px",
+              cursor: "pointer",
+              transition: "all 0.3s",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "10px",
+              minWidth: "200px",
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.backgroundColor = "#7b1fa2";
+              e.target.style.transform = "scale(1.05)";
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.backgroundColor = "#9C27B0";
+              e.target.style.transform = "scale(1)";
+            }}
+          >
+            <span style={{ fontSize: "32px" }}>🛡️</span>
+            <span>
+              I am an <strong>Admin</strong>
             </span>
           </button>
         </div>

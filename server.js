@@ -8,10 +8,13 @@
  * - FRONTEND_URL: Frontend domain for CORS
  */
 
+require('dotenv').config();
+
 const express = require('express');
 const http = require('http');
 const socketIO = require('socket.io');
 const cors = require('cors');
+const mongoose = require('mongoose');
 
 const app = express();
 const server = http.createServer(app);
@@ -26,10 +29,11 @@ const corsOptions = {
   origin: [
     'http://localhost:3000',
     'http://localhost:5173',
+    'http://localhost:5174',
     FRONTEND_URL,
     'https://notary-platform.vercel.app', // Update with your Vercel domain
   ],
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'DELETE', 'PUT'],
   credentials: true,
 };
 
@@ -40,6 +44,28 @@ const io = socketIO(server, {
 
 app.use(cors(corsOptions));
 app.use(express.json());
+
+// MongoDB Connection
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/notary-platform';
+
+mongoose.connect(MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log('✅ MongoDB connected'))
+.catch((err) => console.warn('⚠️  MongoDB connection warning:', err.message));
+
+// Signature Schema
+const signatureSchema = new mongoose.Schema({
+  id: { type: String, unique: true, required: true },
+  name: String,
+  image: { type: String, required: true }, // Base64 data URL
+  userRole: String,
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+});
+
+const Signature = mongoose.model('Signature', signatureSchema);
 
 // Store active sessions and users
 const sessions = new Map();
@@ -84,6 +110,66 @@ app.get('/api/sessions', (req, res) => {
     created: session.created
   }));
   res.json(sessionData);
+});
+
+// Signature API Endpoints
+
+// Get all signatures for a user role
+app.get('/api/signatures/:userRole', async (req, res) => {
+  try {
+    const { userRole } = req.params;
+    const signatures = await Signature.find({ userRole }).sort({ createdAt: -1 });
+    res.json(signatures);
+  } catch (error) {
+    console.error('Error fetching signatures:', error);
+    res.status(500).json({ error: 'Failed to fetch signatures' });
+  }
+});
+
+// Save a new signature
+app.post('/api/signatures', async (req, res) => {
+  try {
+    const { id, name, image, userRole } = req.body;
+
+    console.log('🔐 POST /api/signatures received:', { id, name, userRole, imageLength: image?.length });
+
+    if (!id || !image || !userRole) {
+      console.warn('❌ Missing required fields:', { hasId: !!id, hasImage: !!image, hasUserRole: !!userRole });
+      return res.status(400).json({ error: 'Missing required fields: id, image, userRole' });
+    }
+
+    const signature = new Signature({
+      id,
+      name: name || 'Unnamed Signature',
+      image,
+      userRole,
+    });
+
+    console.log('💾 Saving signature to MongoDB...');
+    await signature.save();
+    console.log('✅ Signature saved successfully:', id);
+    res.json(signature);
+  } catch (error) {
+    console.error('❌ Error saving signature:', error);
+    res.status(500).json({ error: 'Failed to save signature', details: error.message });
+  }
+});
+
+// Delete a signature
+app.delete('/api/signatures/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await Signature.findOneAndDelete({ id });
+
+    if (!result) {
+      return res.status(404).json({ error: 'Signature not found' });
+    }
+
+    res.json({ message: 'Signature deleted' });
+  } catch (error) {
+    console.error('Error deleting signature:', error);
+    res.status(500).json({ error: 'Failed to delete signature' });
+  }
 });
 
 // Socket.io Events

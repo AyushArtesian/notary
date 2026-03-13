@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import SignaturePad from "./SignaturePad";
 
-const SidebarAssets = ({ userRole, onAssetGenerated }) => {
+const SidebarAssets = ({ userRole, onAssetGenerated, showAssets = true }) => {
   const [showSignaturePad, setShowSignaturePad] = useState(false);
   const [assets, setAssets] = useState([
     {
@@ -36,6 +36,39 @@ const SidebarAssets = ({ userRole, onAssetGenerated }) => {
     },
   ]);
 
+  // Fetch saved signatures from backend on mount
+  useEffect(() => {
+    const loadSignatures = async () => {
+      try {
+        const url = 'http://localhost:5002/api/signatures/' + userRole;
+        console.log('[SidebarAssets] Fetching signatures from:', url);
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+          console.warn('[SidebarAssets] Failed to fetch signatures:', response.status);
+          return;
+        }
+
+        const savedSignatures = await response.json();
+        console.log('[SidebarAssets] ✅ Loaded', savedSignatures.length, 'signatures');
+        
+        // Add saved signatures to assets with the proper structure
+        const formattedSignatures = savedSignatures.map(sig => ({
+          id: sig.id,
+          name: sig.name,
+          type: "signature",
+          image: sig.image,
+          user: sig.userRole,
+        }));
+        setAssets(prev => [...prev, ...formattedSignatures]);
+      } catch (error) {
+        console.error('[SidebarAssets] Error loading signatures:', error);
+      }
+    };
+
+    loadSignatures();
+  }, [userRole]);
+
   const handleDragStart = (e, asset) => {
     e.dataTransfer.effectAllowed = "copy";
     e.dataTransfer.setData(
@@ -50,24 +83,69 @@ const SidebarAssets = ({ userRole, onAssetGenerated }) => {
     );
   };
 
-  const handleSignatureGenerated = (signatureImage) => {
+  const handleSignatureGenerated = async (signatureImage) => {
     const newAsset = {
       id: `signature-${userRole}-${Date.now()}`,
-      name: `${userRole} Signature (${new Date().toLocaleTimeString()})`,
+      name: `${userRole.charAt(0).toUpperCase() + userRole.slice(1)} Signature (${new Date().toLocaleTimeString()})`,
       type: "signature",
       image: signatureImage,
       user: userRole,
     };
 
-    setAssets([...assets, newAsset]);
+    console.log("📝 Creating new asset:", newAsset.id);
+    
+    // Add to UI immediately for instant feedback
+    setAssets(prev => [...prev, newAsset]);
     onAssetGenerated?.(newAsset);
+
+    // Save to backend asynchronously
+    try {
+      console.log("💾 Saving signature to MongoDB...");
+      const url = 'http://localhost:5002/api/signatures';
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: newAsset.id,
+          name: newAsset.name,
+          image: signatureImage,
+          userRole: userRole,
+        }),
+      });
+      
+      console.log("Response status:", response.status);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: Failed to save signature`);
+      }
+      
+      const result = await response.json();
+      console.log("✅ Signature saved to backend successfully:", result.id);
+    } catch (error) {
+      console.error("❌ Error saving signature to backend:", error);
+      alert("Error saving signature to database. It is saved locally but may not persist on reload.");
+    }
+    
     setShowSignaturePad(false);
   };
 
   // Filter assets based on user role
-  const visibleAssets = assets.filter(
-    (asset) => asset.user === userRole || asset.user === "owner" || asset.user === "notary"
-  );
+  const visibleAssets = assets.filter(asset => {
+    // For all users, show their own drawn signatures
+    if (asset.type === "signature" && asset.user === userRole) {
+      return true;
+    }
+    
+    // For notary only, show pre-made stamps and notary-specific assets
+    if (userRole === "notary") {
+      return asset.user === "notary" || asset.user === "owner";
+    }
+    
+    // For owner, only show their own assets
+    return false;
+  });
 
   return (
     <div
@@ -149,43 +227,45 @@ const SidebarAssets = ({ userRole, onAssetGenerated }) => {
       )}
 
       {/* Asset List */}
-      <div>
-        <h4>Draggable Assets</h4>
-        {visibleAssets.map((asset) => (
-          <div
-            key={asset.id}
-            draggable
-            onDragStart={(e) => handleDragStart(e, asset)}
-            style={{
-              padding: "10px",
-              margin: "8px 0",
-              backgroundColor: "white",
-              border: "1px solid #ccc",
-              borderRadius: "4px",
-              cursor: "grab",
-              userSelect: "none",
-              transition: "all 0.2s",
-              fontSize: "12px",
-            }}
-            onMouseEnter={(e) => (e.target.style.backgroundColor = "#e8f4f8")}
-            onMouseLeave={(e) => (e.target.style.backgroundColor = "white")}
-          >
-            <strong>{asset.name}</strong>
-            <br />
-            <small style={{ color: "#666" }}>Type: {asset.type}</small>
-            <img
-              src={asset.image}
-              alt={asset.name}
+      {showAssets && (
+        <div>
+          <h4>Draggable Assets</h4>
+          {visibleAssets.map((asset) => (
+            <div
+              key={asset.id}
+              draggable
+              onDragStart={(e) => handleDragStart(e, asset)}
               style={{
-                maxWidth: "100%",
-                height: "40px",
-                marginTop: "5px",
-                borderRadius: "2px",
+                padding: "10px",
+                margin: "8px 0",
+                backgroundColor: "white",
+                border: "1px solid #ccc",
+                borderRadius: "4px",
+                cursor: "grab",
+                userSelect: "none",
+                transition: "all 0.2s",
+                fontSize: "12px",
               }}
-            />
-          </div>
-        ))}
-      </div>
+              onMouseEnter={(e) => (e.target.style.backgroundColor = "#e8f4f8")}
+              onMouseLeave={(e) => (e.target.style.backgroundColor = "white")}
+            >
+              <strong>{asset.name}</strong>
+              <br />
+              <small style={{ color: "#666" }}>Type: {asset.type}</small>
+              <img
+                src={asset.image}
+                alt={asset.name}
+                style={{
+                  maxWidth: "100%",
+                  height: "40px",
+                  marginTop: "5px",
+                  borderRadius: "2px",
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

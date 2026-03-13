@@ -257,7 +257,7 @@ const OwnerPage = () => {
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       {/* Sidebar */}
-      <SidebarAssets userRole="owner" />
+      <SidebarAssets userRole="owner" showAssets={true} />
 
       {/* Main Content */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "15px", overflowY: "auto" }}>

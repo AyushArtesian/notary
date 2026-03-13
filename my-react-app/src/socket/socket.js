@@ -1,7 +1,7 @@
 import io from "socket.io-client";
 
 // Connect to WebSocket server
-const SOCKET_SERVER_URL = import.meta.env.VITE_REACT_APP_SERVER_URL || "http://localhost:5000";
+const SOCKET_SERVER_URL = "http://localhost:5002";
 
 let socket = null;
 
