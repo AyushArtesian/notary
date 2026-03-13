@@ -1,17 +1,47 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import PdfViewer from "../components/PdfViewer";
 import SidebarAssets from "../components/SidebarAssets";
 import CanvasBoard from "../components/CanvasBoard";
 import ScreenRecorder from "../components/ScreenRecorder";
 import socket from "../socket/socket";
+
+const EDITOR_WIDTH = 900;
+const EDITOR_HEIGHT = 1300;
 
 const NotaryPage = ({ sessionId: passedSessionId }) => {
   const [elements, setElements] = useState([]);
   const [sessionId, setSessionId] = useState(passedSessionId || null);
   const [connectedUsers, setConnectedUsers] = useState([]);
   const [documentInfo, setDocumentInfo] = useState(null);
+  const [isConnected, setIsConnected] = useState(socket.connected);
+  const [pdfDataUrl, setPdfDataUrl] = useState(null);
+  const editorScrollRef = useRef(null);
 
-  const [inputSessionId, setInputSessionId] = useState("");
-  const [sessionJoined, setSessionJoined] = useState(!!passedSessionId);
+  // Auto-fill from URL param even if not passed as prop (direct URL open)
+  const urlSessionId = new URLSearchParams(window.location.search).get("sessionId");
+  const storedSessionId = localStorage.getItem("notary.lastSessionId");
+  const initialSessionId = passedSessionId || urlSessionId || storedSessionId || "";
+  const [inputSessionId, setInputSessionId] = useState(initialSessionId);
+  const [sessionJoined, setSessionJoined] = useState(!!initialSessionId);
+
+  // If session ID came from URL, treat it as already set
+  useEffect(() => {
+    if (initialSessionId && !sessionId) {
+      setSessionId(initialSessionId);
+    }
+  }, []);
+
+  // Track backend connection status
+  useEffect(() => {
+    const onConnect = () => setIsConnected(true);
+    const onDisconnect = () => setIsConnected(false);
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+    };
+  }, []);
 
   useEffect(() => {
     if (sessionJoined && sessionId) {
@@ -45,22 +75,48 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         setDocumentInfo(docInfo);
       });
 
+      socket.on("documentShared", (data) => {
+        setPdfDataUrl(data.pdfDataUrl);
+        setDocumentInfo({ fileName: data.fileName });
+      });
+
       return () => {
         socket.off("elementAdded");
         socket.off("elementUpdated");
         socket.off("elementRemoved");
         socket.off("usersConnected");
         socket.off("documentUploaded");
+        socket.off("documentShared");
       };
     }
   }, [sessionJoined, sessionId]);
 
   const handleJoinSession = () => {
-    if (inputSessionId.trim()) {
-      setSessionId(inputSessionId);
+    const trimmed = inputSessionId.trim();
+    if (trimmed) {
+      setSessionId(trimmed);
       setSessionJoined(true);
+      localStorage.setItem("notary.role", "notary");
+      localStorage.setItem("notary.lastSessionId", trimmed);
+
+      const params = new URLSearchParams(window.location.search);
+      params.set("role", "notary");
+      params.set("sessionId", trimmed);
+      window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
     }
   };
+
+  useEffect(() => {
+    if (sessionJoined && sessionId) {
+      localStorage.setItem("notary.role", "notary");
+      localStorage.setItem("notary.lastSessionId", sessionId);
+
+      const params = new URLSearchParams(window.location.search);
+      params.set("role", "notary");
+      params.set("sessionId", sessionId);
+      window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
+    }
+  }, [sessionJoined, sessionId]);
 
   const handleElementAdd = (element) => {
     setElements([...elements, element]);
@@ -101,17 +157,29 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
             borderRadius: "8px",
             boxShadow: "0 4px 6px rgba(0,0,0,0.1)",
             textAlign: "center",
-            maxWidth: "400px",
+            maxWidth: "420px",
+            width: "100%",
           }}
         >
           <h2>🔐 Join Notarization Session</h2>
-          <p style={{ color: "#666" }}>Enter the session ID provided by the document owner</p>
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: "5px",
+            padding: "4px 10px", borderRadius: "20px", fontSize: "13px", fontWeight: "bold",
+            marginBottom: "16px",
+            backgroundColor: isConnected ? "#e8f5e9" : "#ffebee",
+            color: isConnected ? "#2e7d32" : "#c62828",
+            border: `1px solid ${isConnected ? "#a5d6a7" : "#ef9a9a"}`
+          }}>
+            {isConnected ? "● Server connected" : "● Server offline — start the backend first"}
+          </div>
+          <p style={{ color: "#666" }}>Paste the session ID or open the link shared by the document owner.</p>
 
           <input
             type="text"
             placeholder="Enter Session ID"
             value={inputSessionId}
             onChange={(e) => setInputSessionId(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleJoinSession()}
             style={{
               width: "100%",
               padding: "10px",
@@ -124,34 +192,21 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
 
           <button
             onClick={handleJoinSession}
+            disabled={!inputSessionId.trim()}
             style={{
               width: "100%",
               padding: "12px",
-              backgroundColor: "#2196F3",
+              backgroundColor: inputSessionId.trim() ? "#2196F3" : "#9e9e9e",
               color: "white",
               border: "none",
               borderRadius: "4px",
-              cursor: "pointer",
+              cursor: inputSessionId.trim() ? "pointer" : "not-allowed",
               fontWeight: "bold",
               fontSize: "16px",
             }}
           >
             Join Session
           </button>
-
-          <div
-            style={{
-              marginTop: "20px",
-              padding: "15px",
-              backgroundColor: "#f9f9f9",
-              borderRadius: "4px",
-              fontSize: "12px",
-              color: "#666",
-            }}
-          >
-            <p style={{ margin: "5px 0" }}>💡 Example Session ID:</p>
-            <code>notary-session-1234567890</code>
-          </div>
         </div>
       </div>
     );
@@ -166,15 +221,27 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "15px", overflowY: "auto" }}>
         {/* Header */}
         <div style={{ marginBottom: "15px", backgroundColor: "#f3e5f5", padding: "15px", borderRadius: "5px" }}>
-          <h2 style={{ margin: "0 0 10px 0" }}>✍️ Notary Dashboard</h2>
-          <p style={{ margin: "5px 0" }}>
-            <strong>Session ID:</strong> {sessionId}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+            <h2 style={{ margin: 0 }}>✍️ Notary Dashboard</h2>
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: "5px",
+              padding: "4px 10px", borderRadius: "20px", fontSize: "13px", fontWeight: "bold",
+              backgroundColor: isConnected ? "#e8f5e9" : "#ffebee",
+              color: isConnected ? "#2e7d32" : "#c62828",
+              border: `1px solid ${isConnected ? "#a5d6a7" : "#ef9a9a"}`
+            }}>
+              {isConnected ? "● Server connected" : "● Server offline"}
+            </span>
+          </div>
+          <p style={{ margin: "8px 0 4px" }}>
+            <strong>Session ID:</strong>{" "}
+            <code style={{ fontSize: "13px", backgroundColor: "#fff", padding: "2px 6px", borderRadius: "3px" }}>{sessionId}</code>
           </p>
-          <p style={{ margin: "5px 0" }}>
+          <p style={{ margin: "4px 0" }}>
             <strong>Connected Users:</strong> {connectedUsers.length}
           </p>
           {documentInfo && (
-            <p style={{ margin: "5px 0" }}>
+            <p style={{ margin: "4px 0" }}>
               <strong>Document:</strong> {documentInfo.fileName}
             </p>
           )}
@@ -186,29 +253,59 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         {/* Canvas Board (Full Width) */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <h3 style={{ margin: "0 0 10px 0" }}>📋 Document with Signatures</h3>
-          <CanvasBoard
-            elements={elements}
-            onElementAdd={handleElementAdd}
-            onElementUpdate={handleElementUpdate}
-            onElementRemove={handleElementRemove}
-            canvasWidth={900}
-            canvasHeight={600}
-          />
-        </div>
-
-        {/* Element List */}
-        <div style={{ marginTop: "15px", padding: "10px", backgroundColor: "#f9f9f9", borderRadius: "5px", maxHeight: "150px", overflowY: "auto" }}>
-          <h4 style={{ margin: "0 0 10px 0" }}>Elements on Canvas ({elements.length})</h4>
-          {elements.length === 0 ? (
-            <p style={{ color: "#999", margin: 0 }}>No elements yet. Drag assets from sidebar to add.</p>
+          {pdfDataUrl ? (
+            <div
+              ref={editorScrollRef}
+              style={{ overflowY: "auto", overflowX: "auto", maxHeight: "70vh", border: "1px solid #ddd", borderRadius: "5px" }}
+            >
+              <div
+                style={{
+                  position: "relative",
+                  width: `${EDITOR_WIDTH}px`,
+                  height: `${EDITOR_HEIGHT}px`,
+                  backgroundColor: "white",
+                }}
+              >
+                <PdfViewer
+                  file={pdfDataUrl}
+                  containerHeight={`${EDITOR_HEIGHT}px`}
+                  showControls={false}
+                  pageWidth={EDITOR_WIDTH}
+                  noInternalScroll
+                />
+                <div
+                  style={{ position: "absolute", inset: 0 }}
+                  onWheel={(e) => {
+                    if (editorScrollRef.current) {
+                      editorScrollRef.current.scrollTop += e.deltaY;
+                    }
+                  }}
+                >
+                  <CanvasBoard
+                    elements={elements}
+                    onElementAdd={handleElementAdd}
+                    onElementUpdate={handleElementUpdate}
+                    onElementRemove={handleElementRemove}
+                    canvasWidth={EDITOR_WIDTH}
+                    canvasHeight={EDITOR_HEIGHT}
+                    overlayMode
+                    showGuide={false}
+                  />
+                </div>
+              </div>
+            </div>
           ) : (
-            <ul style={{ margin: 0, paddingLeft: "20px" }}>
-              {elements.map((el) => (
-                <li key={el.id}>
-                  {el.type} by {el.user} at ({Math.round(el.x)}, {Math.round(el.y)})
-                </li>
-              ))}
-            </ul>
+            <div
+              style={{
+                border: "2px dashed #ccc",
+                padding: "40px",
+                textAlign: "center",
+                color: "#999",
+                borderRadius: "5px",
+              }}
+            >
+              Waiting for the document owner to upload a PDF...
+            </div>
           )}
         </div>
       </div>

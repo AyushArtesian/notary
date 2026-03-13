@@ -35,6 +35,7 @@ const corsOptions = {
 
 const io = socketIO(server, {
   cors: corsOptions,
+  maxHttpBufferSize: 20e6, // allow up to 20 MB for PDF data transfers
 });
 
 app.use(cors(corsOptions));
@@ -87,6 +88,14 @@ io.on('connection', (socket) => {
 
     // Notify all users in the session
     io.to(roomId).emit('usersConnected', session.users);
+
+    // If a document was already shared before this user joined, replay it immediately
+    if (session.pdfDataUrl) {
+      socket.emit('documentShared', {
+        pdfDataUrl: session.pdfDataUrl,
+        fileName: session.pdfFileName || 'document.pdf',
+      });
+    }
   });
 
   // Handle document upload notification
@@ -95,6 +104,20 @@ io.on('connection', (socket) => {
     if (userSession) {
       io.to(userSession.roomId).emit('documentUploaded', data);
       console.log(`📄 Document uploaded: ${data.fileName}`);
+
+      // Handle full PDF data sharing — store in session and relay to others
+      socket.on('documentShared', (data) => {
+        const userSession = userSessions.get(socket.id);
+        if (userSession) {
+          const session = sessions.get(userSession.roomId);
+          if (session) {
+            session.pdfDataUrl = data.pdfDataUrl;
+            session.pdfFileName = data.fileName;
+          }
+          socket.to(userSession.roomId).emit('documentShared', data);
+          console.log(`📤 Document shared to room: ${data.fileName}`);
+        }
+      });
     }
   });
 

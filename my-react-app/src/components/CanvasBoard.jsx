@@ -39,7 +39,16 @@ const DraggableImageElement = ({ element, onDragEnd, onSelect, isSelected }) => 
   );
 };
 
-const CanvasBoard = ({ elements, onElementAdd, onElementUpdate, onElementRemove, canvasWidth = 800, canvasHeight = 600 }) => {
+const CanvasBoard = ({
+  elements,
+  onElementAdd,
+  onElementUpdate,
+  onElementRemove,
+  canvasWidth = 800,
+  canvasHeight = 600,
+  overlayMode = false,
+  showGuide = true,
+}) => {
   const stageRef = useRef(null);
   const [selectedId, setSelectedId] = useState(null);
 
@@ -91,9 +100,9 @@ const CanvasBoard = ({ elements, onElementAdd, onElementUpdate, onElementRemove,
       onDrop={handleDrop}
       onDragOver={handleDragOver}
       style={{
-        border: "2px solid #333",
+        border: overlayMode ? "none" : "2px solid #333",
         borderRadius: "5px",
-        backgroundColor: "#f9f9f9",
+        backgroundColor: overlayMode ? "transparent" : "#f9f9f9",
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
@@ -102,8 +111,8 @@ const CanvasBoard = ({ elements, onElementAdd, onElementUpdate, onElementRemove,
     >
       <Stage ref={stageRef} width={canvasWidth} height={canvasHeight}>
         <Layer>
-          {/* Background rectangle */}
-          <Text x={10} y={10} text="Drop signatures & stamps here" fontSize={14} fill="#999" />
+          {/* Drop hint for canvas/editor */}
+          {showGuide && <Text x={10} y={10} text="Drop signatures & stamps here" fontSize={14} fill="#999" />}
 
           {/* Render all elements */}
           {elements.map((element) => (
@@ -119,9 +128,11 @@ const CanvasBoard = ({ elements, onElementAdd, onElementUpdate, onElementRemove,
       </Stage>
 
       {/* Help text */}
-      <div style={{ position: "absolute", bottom: 10, left: 10, fontSize: "12px", color: "#666" }}>
-        💡 Drag signatures from sidebar • Click to select • Press Delete to remove
-      </div>
+      {showGuide && (
+        <div style={{ position: "absolute", bottom: 10, left: 10, fontSize: "12px", color: "#666" }}>
+          💡 Drag signatures from sidebar • Click to select • Press Delete to remove
+        </div>
+      )}
     </div>
   );
 };

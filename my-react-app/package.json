@@ -12,7 +12,7 @@
   "dependencies": {
     "konva": "^10.2.0",
     "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "^5.5.207",
+    "pdfjs-dist": "5.4.296",
     "react": "^19.2.4",
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",

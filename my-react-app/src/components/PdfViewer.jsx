@@ -1,18 +1,38 @@
 import React, { useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 
-// Set up PDF worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+// Use Vite-bundled worker to avoid CDN/network failures in local/dev environments.
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/build/pdf.worker.min.mjs",
+  import.meta.url
+).toString();
 
-const PdfViewer = ({ file, onLoadSuccess, containerHeight = "600px" }) => {
+const PdfViewer = ({
+  file,
+  onLoadSuccess,
+  containerHeight = "600px",
+  showControls = true,
+  pageWidth,
+  noInternalScroll = false,
+}) => {
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
+  const [loadError, setLoadError] = useState("");
 
   const handleLoadSuccess = ({ numPages: totalPages }) => {
+    setLoadError("");
     setNumPages(totalPages);
     if (onLoadSuccess) {
       onLoadSuccess(totalPages);
     }
+  };
+
+  const handleLoadError = (error) => {
+    console.error("PDF load error:", error);
+    setNumPages(null);
+    setPageNumber(1);
+    const details = error?.message ? ` (${error.message})` : "";
+    setLoadError(`Unable to open this PDF. Please upload a valid PDF file.${details}`);
   };
 
   const goToPreviousPage = () => {
@@ -25,23 +45,34 @@ const PdfViewer = ({ file, onLoadSuccess, containerHeight = "600px" }) => {
 
   return (
     <div className="pdf-viewer" style={{ height: containerHeight, display: "flex", flexDirection: "column" }}>
-      <div className="pdf-controls" style={{ padding: "10px", backgroundColor: "#f0f0f0", borderBottom: "1px solid #ccc" }}>
-        <button onClick={goToPreviousPage} disabled={pageNumber <= 1}>
-          ← Previous
-        </button>
-        <span style={{ margin: "0 10px" }}>
-          Page {pageNumber} of {numPages || "loading..."}
-        </span>
-        <button onClick={goToNextPage} disabled={!numPages || pageNumber >= numPages}>
-          Next →
-        </button>
-      </div>
+      {showControls && (
+        <div className="pdf-controls" style={{ padding: "10px", backgroundColor: "#f0f0f0", borderBottom: "1px solid #ccc" }}>
+          <button onClick={goToPreviousPage} disabled={pageNumber <= 1}>
+            ← Previous
+          </button>
+          <span style={{ margin: "0 10px" }}>
+            Page {pageNumber} of {numPages || "loading..."}
+          </span>
+          <button onClick={goToNextPage} disabled={!numPages || pageNumber >= numPages}>
+            Next →
+          </button>
+        </div>
+      )}
 
-      <div style={{ flex: 1, overflow: "auto", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: "10px" }}>
+      <div style={{ flex: 1, overflow: noInternalScroll ? "visible" : "auto", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: "10px" }}>
         {file ? (
-          <Document file={file} onLoadSuccess={handleLoadSuccess} loading={<p>Loading PDF...</p>}>
-            <Page pageNumber={pageNumber} scale={1.2} />
-          </Document>
+          <>
+            <Document
+              file={file}
+              onLoadSuccess={handleLoadSuccess}
+              onLoadError={handleLoadError}
+              loading={<p>Loading PDF...</p>}
+              error={null}
+            >
+              <Page pageNumber={pageNumber} scale={pageWidth ? undefined : 1.2} width={pageWidth} />
+            </Document>
+            {loadError && <p style={{ color: "#d32f2f" }}>{loadError}</p>}
+          </>
         ) : (
           <p>No document loaded</p>
         )}

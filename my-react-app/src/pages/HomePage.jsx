@@ -1,16 +1,62 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import OwnerPage from "./OwnerPage";
 import NotaryPage from "./NotaryPage";
 
 const HomePage = () => {
   const [selectedRole, setSelectedRole] = useState(null);
+  const [urlSessionId, setUrlSessionId] = useState(null);
+
+  // Auto-route when a share link is opened (e.g. ?role=notary&sessionId=notary-session-xxx)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const role = params.get("role");
+    const sid = params.get("sessionId");
+
+    if (role === "notary" && sid) {
+      setUrlSessionId(sid);
+      setSelectedRole("notary");
+    } else if (role === "owner") {
+      setSelectedRole("owner");
+    } else {
+      // Fallback to local storage when URL params are absent.
+      const storedRole = localStorage.getItem("notary.role");
+      const storedSessionId = localStorage.getItem("notary.lastSessionId");
+      if (storedRole === "owner") {
+        setSelectedRole("owner");
+      } else if (storedRole === "notary") {
+        setSelectedRole("notary");
+        if (storedSessionId) {
+          setUrlSessionId(storedSessionId);
+        }
+      }
+    }
+  }, []);
+
+  const handleSelectRole = (role) => {
+    localStorage.setItem("notary.role", role);
+
+    const params = new URLSearchParams(window.location.search);
+    params.set("role", role);
+
+    const storedSessionId = localStorage.getItem("notary.lastSessionId");
+    if (role === "notary" && storedSessionId) {
+      params.set("sessionId", storedSessionId);
+      setUrlSessionId(storedSessionId);
+    } else if (role === "owner") {
+      // Owner session ID is generated/restored in OwnerPage; do not force one here.
+      params.delete("sessionId");
+    }
+
+    window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
+    setSelectedRole(role);
+  };
 
   if (selectedRole === "owner") {
     return <OwnerPage />;
   }
 
   if (selectedRole === "notary") {
-    return <NotaryPage />;
+    return <NotaryPage sessionId={urlSessionId} />;
   }
 
   return (
@@ -42,7 +88,7 @@ const HomePage = () => {
         <div style={{ display: "flex", gap: "20px", justifyContent: "center" }}>
           {/* Owner Button */}
           <button
-            onClick={() => setSelectedRole("owner")}
+            onClick={() => handleSelectRole("owner")}
             style={{
               padding: "20px 40px",
               fontSize: "18px",
@@ -76,7 +122,7 @@ const HomePage = () => {
 
           {/* Notary Button */}
           <button
-            onClick={() => setSelectedRole("notary")}
+            onClick={() => handleSelectRole("notary")}
             style={{
               padding: "20px 40px",
               fontSize: "18px",
