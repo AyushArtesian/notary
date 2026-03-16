@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
+import { getMimeTypeFromDataUrl, isImageLike, isPdfLike } from "../utils/documentAsset";
 
 // Use Vite-bundled worker to avoid CDN/network failures in local/dev environments.
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -9,6 +10,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 
 const PdfViewer = ({
   file,
+  fileName,
   onLoadSuccess,
   containerHeight = "600px",
   showControls = true,
@@ -18,6 +20,10 @@ const PdfViewer = ({
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [loadError, setLoadError] = useState("");
+  const resolvedMimeType = typeof file === "string" ? getMimeTypeFromDataUrl(file) : file?.type || "";
+  const resolvedFileName = typeof file === "string" ? fileName || "" : file?.name || fileName || "";
+  const isPdfFile = isPdfLike({ fileName: resolvedFileName, mimeType: resolvedMimeType, dataUrl: typeof file === "string" ? file : "" });
+  const isImageFile = isImageLike({ fileName: resolvedFileName, mimeType: resolvedMimeType, dataUrl: typeof file === "string" ? file : "" });
 
   const handleLoadSuccess = ({ numPages: totalPages }) => {
     setLoadError("");
@@ -45,7 +51,7 @@ const PdfViewer = ({
 
   return (
     <div className="pdf-viewer" style={{ height: containerHeight, display: "flex", flexDirection: "column" }}>
-      {showControls && (
+      {showControls && isPdfFile && (
         <div className="pdf-controls" style={{ padding: "10px", backgroundColor: "#f0f0f0", borderBottom: "1px solid #ccc" }}>
           <button onClick={goToPreviousPage} disabled={pageNumber <= 1}>
             ← Previous
@@ -61,18 +67,36 @@ const PdfViewer = ({
 
       <div style={{ flex: 1, overflow: noInternalScroll ? "visible" : "auto", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: "10px" }}>
         {file ? (
-          <>
-            <Document
-              file={file}
-              onLoadSuccess={handleLoadSuccess}
-              onLoadError={handleLoadError}
-              loading={<p>Loading PDF...</p>}
-              error={null}
-            >
-              <Page pageNumber={pageNumber} scale={pageWidth ? undefined : 1.2} width={pageWidth} />
-            </Document>
-            {loadError && <p style={{ color: "#d32f2f" }}>{loadError}</p>}
-          </>
+          isPdfFile ? (
+            <>
+              <Document
+                file={file}
+                onLoadSuccess={handleLoadSuccess}
+                onLoadError={handleLoadError}
+                loading={<p>Loading PDF...</p>}
+                error={null}
+              >
+                <Page pageNumber={pageNumber} scale={pageWidth ? undefined : 1.2} width={pageWidth} />
+              </Document>
+              {loadError && <p style={{ color: "#d32f2f" }}>{loadError}</p>}
+            </>
+          ) : isImageFile ? (
+            <img
+              src={typeof file === "string" ? file : URL.createObjectURL(file)}
+              alt={resolvedFileName || "Uploaded document"}
+              style={{
+                width: pageWidth ? `${pageWidth}px` : "100%",
+                maxWidth: "100%",
+                maxHeight: "100%",
+                objectFit: "contain",
+                display: "block",
+              }}
+            />
+          ) : (
+            <p style={{ color: "#666", textAlign: "center", maxWidth: "420px", lineHeight: 1.5 }}>
+              Preview is unavailable for this file type. A draggable PNG preview is still added to the asset sidebar.
+            </p>
+          )
         ) : (
           <p>No document loaded</p>
         )}

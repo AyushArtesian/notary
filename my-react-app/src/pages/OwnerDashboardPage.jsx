@@ -6,6 +6,7 @@ import PdfViewer from "../components/PdfViewer";
 import SidebarAssets from "../components/SidebarAssets";
 import CanvasBoard from "../components/CanvasBoard";
 import ScreenRecorder from "../components/ScreenRecorder";
+import { createDocumentDragAsset } from "../utils/documentAsset";
 
 const STORAGE_KEY = "notary.ownerDocs";
 const ACTIVE_SESSIONS_KEY = "notary.ownerActiveSessions";
@@ -244,6 +245,7 @@ const OwnerDashboardPage = () => {
   const [editorElements, setEditorElements] = useState([]);
   const [uploadedFile, setUploadedFile] = useState(restoredDashboardState.uploadedFile || null);
   const [uploadedFileName, setUploadedFileName] = useState(restoredDashboardState.uploadedFileName || "");
+  const [uploadedAsset, setUploadedAsset] = useState(restoredDashboardState.uploadedAsset || null);
   const lastAutoSharedDocKeyRef = useRef("");
   const editorScrollRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -267,9 +269,10 @@ const OwnerDashboardPage = () => {
         sessionDocName,
         uploadedFile,
         uploadedFileName,
+        uploadedAsset,
       })
     );
-  }, [activeSessionDocId, sessionJoined, sessionDocName, uploadedFile, uploadedFileName]);
+  }, [activeSessionDocId, sessionJoined, sessionDocName, uploadedFile, uploadedFileName, uploadedAsset]);
 
   useEffect(() => {
     if (!activeSessionDocId || uploadedFile) return;
@@ -408,6 +411,25 @@ const OwnerDashboardPage = () => {
     setSessionJoined(true);
   };
 
+  const handleSessionAssetUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const asset = await createDocumentDragAsset({
+        fileName: file.name,
+        dataUrl: reader.result,
+        mimeType: file.type,
+        userRole: "owner",
+      });
+
+      setUploadedAsset(asset);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
   const handleEditorElementAdd = (element) => {
     setEditorElements((prev) => [...prev, element]);
     const sessionIdVal = activeSessions[activeSessionDocId];
@@ -437,6 +459,7 @@ const OwnerDashboardPage = () => {
     setSessionJoined(false);
     setUploadedFile(null);
     setUploadedFileName("");
+    setUploadedAsset(null);
     lastAutoSharedDocKeyRef.current = "";
     localStorage.removeItem(DASHBOARD_STATE_KEY);
   };
@@ -577,7 +600,7 @@ const OwnerDashboardPage = () => {
       {activeSessionDocId && sessionJoined ? (
         <div style={{ display: "flex", height: "100vh" }}>
           {/* Sidebar */}
-          <SidebarAssets userRole="owner" />
+          <SidebarAssets userRole="owner" uploadedAsset={uploadedAsset} />
 
           {/* Main Content */}
           <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "15px", overflowY: "auto" }}>
@@ -617,29 +640,16 @@ const OwnerDashboardPage = () => {
             {/* Document Editor */}
             <div style={{ marginBottom: "15px", padding: "15px", backgroundColor: "#f5f5f5", borderRadius: "5px" }}>
               <label htmlFor="session-file-upload" style={{ fontWeight: "bold" }}>
-                📁 Upload Document:
+                📁 Upload Asset:
               </label>
               <input
                 id="session-file-upload"
                 type="file"
-                accept=".pdf,application/pdf"
+                accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,application/pdf,image/*,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 style={{ marginLeft: "10px", cursor: "pointer" }}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                    setUploadedFile(reader.result);
-                    setUploadedFileName(file.name);
-                    const sessionIdVal = activeSessions[activeSessionDocId];
-                    if (sessionIdVal) {
-                      socket.emit("documentShared", { pdfDataUrl: reader.result, fileName: file.name });
-                    }
-                  };
-                  reader.readAsDataURL(file);
-                }}
+                onChange={handleSessionAssetUpload}
               />
-              {uploadedFile && <p style={{ margin: "5px 0 0 0", color: "green" }}>✅ {uploadedFileName}</p>}
+              {uploadedAsset && <p style={{ margin: "5px 0 0 0", color: "green" }}>✅ {uploadedAsset.name} added to assets</p>}
             </div>
 
             <div
@@ -660,6 +670,7 @@ const OwnerDashboardPage = () => {
                 >
                   <PdfViewer
                     file={uploadedFile}
+                    fileName={uploadedFileName}
                     containerHeight={`${EDITOR_HEIGHT}px`}
                     showControls={false}
                     pageWidth={EDITOR_WIDTH}

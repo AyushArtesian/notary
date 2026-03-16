@@ -4,6 +4,7 @@ import SidebarAssets from "../components/SidebarAssets";
 import CanvasBoard from "../components/CanvasBoard";
 import ScreenRecorder from "../components/ScreenRecorder";
 import socket from "../socket/socket";
+import { createDocumentDragAsset } from "../utils/documentAsset";
 
 const EDITOR_WIDTH = 900;
 const EDITOR_HEIGHT = 1300;
@@ -37,7 +38,9 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
   const [pdfDataUrl, setPdfDataUrl] = useState(null);
   const [ownerConnected, setOwnerConnected] = useState(false);
   const [sessionStatus, setSessionStatus] = useState(null);
+  const [uploadedAsset, setUploadedAsset] = useState(null);
   const editorScrollRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // Auto-fill from URL param even if not passed as prop (direct URL open)
   const urlSessionId = normalizeSessionId(new URLSearchParams(window.location.search).get("sessionId"));
@@ -171,6 +174,25 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     socket.emit("elementRemoved", elementId);
   };
 
+  const handleAssetUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const asset = await createDocumentDragAsset({
+        fileName: file.name,
+        dataUrl: reader.result,
+        mimeType: file.type,
+        userRole: "notary",
+      });
+
+      setUploadedAsset(asset);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
   if (!sessionJoined) {
     return (
       <div
@@ -247,7 +269,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       {/* Sidebar */}
-      <SidebarAssets userRole="notary" />
+      <SidebarAssets userRole="notary" uploadedAsset={uploadedAsset} />
 
       {/* Main Content */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "15px", overflowY: "auto" }}>
@@ -294,6 +316,22 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         {/* Screen Recorder */}
         <ScreenRecorder />
 
+        {/* Asset Upload Section */}
+        <div style={{ marginBottom: "15px", padding: "15px", backgroundColor: "#f5f5f5", borderRadius: "5px" }}>
+          <label htmlFor="notary-asset-upload" style={{ fontWeight: "bold" }}>
+            📎 Upload Asset:
+          </label>
+          <input
+            id="notary-asset-upload"
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,application/pdf,image/*,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            style={{ marginLeft: "10px", cursor: "pointer" }}
+            onChange={handleAssetUpload}
+          />
+          {uploadedAsset && <p style={{ margin: "5px 0 0 0", color: "green" }}>✅ {uploadedAsset.name} added to assets</p>}
+        </div>
+
         {/* Canvas Board (Full Width) */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <h3 style={{ margin: "0 0 10px 0" }}>📋 Document with Signatures</h3>
@@ -313,6 +351,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
               >
                 <PdfViewer
                   file={pdfDataUrl}
+                  fileName={documentInfo?.fileName}
                   containerHeight={`${EDITOR_HEIGHT}px`}
                   showControls={false}
                   pageWidth={EDITOR_WIDTH}
@@ -349,7 +388,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
                 borderRadius: "5px",
               }}
             >
-              Waiting for the document owner to upload a PDF...
+              Waiting for the document owner to upload a document...
             </div>
           )}
         </div>

@@ -98,8 +98,15 @@ const SidebarAssets = ({ userRole, onAssetGenerated, showAssets = true, uploaded
     if (hidden.has(uploadedAsset.id)) return;
 
     setAssets(prev => {
-      if (prev.some((a) => a.id === uploadedAsset.id)) return prev;
-      return [...prev, uploadedAsset];
+      const withoutPreviousUploadedDocs = prev.filter(
+        (asset) => !(asset.source === "uploaded-document" && asset.user === userRole)
+      );
+
+      if (withoutPreviousUploadedDocs.some((asset) => asset.id === uploadedAsset.id)) {
+        return withoutPreviousUploadedDocs;
+      }
+
+      return [...withoutPreviousUploadedDocs, uploadedAsset];
     });
   }, [uploadedAsset, userRole]);
 
