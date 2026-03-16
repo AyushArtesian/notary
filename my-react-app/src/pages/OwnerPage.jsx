@@ -408,7 +408,7 @@ const OwnerPage = () => {
           {uploadedFile && (
             <div
               ref={editorScrollRef}
-              style={{ overflowY: "auto", overflowX: "auto", maxHeight: "70vh", border: "none", borderRadius: "5px", backgroundColor: "transparent" }}
+              style={{ maxHeight: "70vh", border: "none", borderRadius: "5px", backgroundColor: "transparent" }}
             >
               <div
                 style={{
@@ -416,6 +416,7 @@ const OwnerPage = () => {
                   width: `${EDITOR_WIDTH}px`,
                   height: `${EDITOR_HEIGHT}px`,
                   backgroundColor: "white",
+                  overflow: "hidden",
                 }}
               >
                 <PdfViewer
@@ -423,7 +424,7 @@ const OwnerPage = () => {
                   containerHeight={`${EDITOR_HEIGHT}px`}
                   showControls={false}
                   pageWidth={EDITOR_WIDTH}
-                  noInternalScroll
+                  noInternalScroll={false}
                 />
 
                 <div

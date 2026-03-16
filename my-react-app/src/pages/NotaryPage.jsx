@@ -300,7 +300,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
           {pdfDataUrl ? (
             <div
               ref={editorScrollRef}
-              style={{ overflowY: "auto", overflowX: "auto", maxHeight: "70vh", border: "1px solid #ddd", borderRadius: "5px" }}
+              style={{ maxHeight: "70vh", border: "1px solid #ddd", borderRadius: "5px" }}
             >
               <div
                 style={{
@@ -308,6 +308,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
                   width: `${EDITOR_WIDTH}px`,
                   height: `${EDITOR_HEIGHT}px`,
                   backgroundColor: "white",
+                  overflow: "hidden",
                 }}
               >
                 <PdfViewer
@@ -315,7 +316,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
                   containerHeight={`${EDITOR_HEIGHT}px`}
                   showControls={false}
                   pageWidth={EDITOR_WIDTH}
-                  noInternalScroll
+                  noInternalScroll={false}
                 />
                 <div
                   style={{ position: "absolute", inset: 0 }}

@@ -644,7 +644,7 @@ const OwnerDashboardPage = () => {
 
             <div
               ref={editorScrollRef}
-              style={{ overflowY: "auto", overflowX: "auto", maxHeight: "70vh", border: "1px solid #ccc", borderRadius: "5px", backgroundColor: "#fff", flexShrink: 0 }}
+              style={{ maxHeight: "70vh", borderRadius: "5px", backgroundColor: "#fff", flexShrink: 0 }}
             >
               <h3 style={{ margin: "10px 15px" }}>Document Editor</h3>
               {uploadedFile ? (
@@ -655,6 +655,7 @@ const OwnerDashboardPage = () => {
                     height: `${EDITOR_HEIGHT}px`,
                     backgroundColor: "white",
                     margin: "0 15px 15px 15px",
+                    overflow: "hidden",
                   }}
                 >
                   <PdfViewer
@@ -662,7 +663,7 @@ const OwnerDashboardPage = () => {
                     containerHeight={`${EDITOR_HEIGHT}px`}
                     showControls={false}
                     pageWidth={EDITOR_WIDTH}
-                    noInternalScroll
+                    noInternalScroll={false}
                   />
                   <div
                     style={{ position: "absolute", inset: 0 }}
@@ -1199,7 +1200,7 @@ const OwnerDashboardPage = () => {
           </div>
         )}
       </div>
-        </div>
+    </div>
       )}
 
       {/* Notarize Confirmation Modal */}
