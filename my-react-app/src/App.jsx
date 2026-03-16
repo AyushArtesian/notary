@@ -1,6 +1,7 @@
 import React from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import OwnerPage from './pages/OwnerPage'
+import OwnerDashboardPage from './pages/OwnerDashboardPage'
 import NotaryPage from './pages/NotaryPage'
 import AdminPage from './pages/AdminPage'
 import AuthPage from './pages/AuthPage'
@@ -18,7 +19,7 @@ const getAuthUser = () => {
 }
 
 const getDefaultRouteByRole = (role) => {
-  if (role === 'owner') return '/owner'
+  if (role === 'owner') return '/owner/doc/dashboard'
   if (role === 'notary') return '/notary'
   if (role === 'admin') return '/admin'
   return null
@@ -89,6 +90,16 @@ function App() {
             ) : (
               <Navigate to="/login" replace />
             )
+          }
+        />
+        <Route
+          path="/owner/doc/dashboard"
+          element={
+            <RequireAuth>
+              <RequireRole allowedRoles={['owner']}>
+                <OwnerDashboardPage />
+              </RequireRole>
+            </RequireAuth>
           }
         />
         <Route
