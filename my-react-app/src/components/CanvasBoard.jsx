@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from "react";
-import { Stage, Layer, Image, Text } from "react-konva";
+import { Stage, Layer, Image, Transformer } from "react-konva";
 
 // Custom hook to load images
 const useKonvaImage = (src) => {
@@ -17,25 +17,75 @@ const useKonvaImage = (src) => {
 };
 
 // Draggable Image Component
-const DraggableImageElement = ({ element, onDragEnd, onSelect, isSelected }) => {
+const DraggableImageElement = ({ element, onChange, onSelect, isSelected }) => {
   const image = useKonvaImage(element.image);
+  const imageRef = useRef(null);
+  const transformerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isSelected || !transformerRef.current || !imageRef.current) return;
+
+    transformerRef.current.nodes([imageRef.current]);
+    transformerRef.current.getLayer()?.batchDraw();
+  }, [isSelected, image]);
 
   if (!image) return null;
 
   return (
-    <Image
-      image={image}
-      x={element.x}
-      y={element.y}
-      width={element.width || 100}
-      height={element.height || 100}
-      draggable
-      onClick={() => onSelect(element.id)}
-      onDragEnd={(e) => onDragEnd(element.id, e.target.x(), e.target.y())}
-      opacity={isSelected ? 0.8 : 1}
-      stroke={isSelected ? "blue" : ""}
-      strokeWidth={isSelected ? 2 : 0}
-    />
+    <>
+      <Image
+        ref={imageRef}
+        image={image}
+        x={element.x}
+        y={element.y}
+        width={element.width || 100}
+        height={element.height || 100}
+        draggable
+        onClick={() => onSelect(element.id)}
+        onTap={() => onSelect(element.id)}
+        onDragEnd={(e) => onChange(element.id, { x: e.target.x(), y: e.target.y() })}
+        onTransformEnd={() => {
+          const node = imageRef.current;
+          if (!node) return;
+
+          const scaleX = node.scaleX();
+          const scaleY = node.scaleY();
+
+          node.scaleX(1);
+          node.scaleY(1);
+
+          const minSize = 24;
+          onChange(element.id, {
+            x: node.x(),
+            y: node.y(),
+            width: Math.max(minSize, node.width() * scaleX),
+            height: Math.max(minSize, node.height() * scaleY),
+          });
+        }}
+        opacity={isSelected ? 0.8 : 1}
+        stroke={isSelected ? "blue" : ""}
+        strokeWidth={isSelected ? 2 : 0}
+      />
+      {isSelected && (
+        <Transformer
+          ref={transformerRef}
+          rotateEnabled={false}
+          enabledAnchors={[
+            "top-left",
+            "top-right",
+            "bottom-left",
+            "bottom-right",
+          ]}
+          boundBoxFunc={(oldBox, newBox) => {
+            const minSize = 24;
+            if (Math.abs(newBox.width) < minSize || Math.abs(newBox.height) < minSize) {
+              return oldBox;
+            }
+            return newBox;
+          }}
+        />
+      )}
+    </>
   );
 };
 
@@ -47,17 +97,16 @@ const CanvasBoard = ({
   canvasWidth = 800,
   canvasHeight = 600,
   overlayMode = false,
-  showGuide = true,
 }) => {
   const stageRef = useRef(null);
   const [selectedId, setSelectedId] = useState(null);
 
-  const handleDragEnd = (id, x, y) => {
-    onElementUpdate(id, { x, y });
+  const handleElementChange = (id, updates) => {
+    onElementUpdate(id, updates);
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === "Delete" && selectedId) {
+    if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
       onElementRemove(selectedId);
       setSelectedId(null);
     }
@@ -71,16 +120,37 @@ const CanvasBoard = ({
   // Handle dropping from sidebar
   const handleDrop = (e) => {
     e.preventDefault();
-    const data = JSON.parse(e.dataTransfer.getData("application/json"));
-    
-    const stage = stageRef.current.getStage();
-    const point = stage.getPointerPosition();
+    let data = null;
+
+    try {
+      const raw = e.dataTransfer.getData("application/json");
+      data = raw ? JSON.parse(raw) : null;
+    } catch {
+      data = null;
+    }
+
+    if (!data?.image) return;
+
+    const stage = stageRef.current?.getStage();
+    if (!stage) return;
+
+    // Align drop coordinates to the Konva stage even when dragged from external DOM nodes.
+    stage.setPointersPositions(e.nativeEvent);
+    const pointer = stage.getPointerPosition();
+    const rect = stage.container().getBoundingClientRect();
+    const xFromEvent = e.clientX - rect.left;
+    const yFromEvent = e.clientY - rect.top;
+
+    const rawX = pointer?.x ?? xFromEvent;
+    const rawY = pointer?.y ?? yFromEvent;
+    const safeX = Math.max(0, Math.min(rawX, canvasWidth - 1));
+    const safeY = Math.max(0, Math.min(rawY, canvasHeight - 1));
 
     const newElement = {
       id: Date.now().toString(),
       image: data.image,
-      x: point.x,
-      y: point.y,
+      x: safeX,
+      y: safeY,
       width: 100,
       height: 100,
       type: data.type,
@@ -111,15 +181,12 @@ const CanvasBoard = ({
     >
       <Stage ref={stageRef} width={canvasWidth} height={canvasHeight}>
         <Layer>
-          {/* Drop hint for canvas/editor */}
-          {showGuide && <Text x={10} y={10} text="Drop signatures & stamps here" fontSize={14} fill="#999" />}
-
           {/* Render all elements */}
           {elements.map((element) => (
             <DraggableImageElement
               key={element.id}
               element={element}
-              onDragEnd={handleDragEnd}
+              onChange={handleElementChange}
               onSelect={setSelectedId}
               isSelected={selectedId === element.id}
             />
@@ -127,12 +194,33 @@ const CanvasBoard = ({
         </Layer>
       </Stage>
 
-      {/* Help text */}
-      {showGuide && (
-        <div style={{ position: "absolute", bottom: 10, left: 10, fontSize: "12px", color: "#666" }}>
-          💡 Drag signatures from sidebar • Click to select • Press Delete to remove
-        </div>
+      {selectedId && (
+        <button
+          type="button"
+          onClick={() => {
+            onElementRemove(selectedId);
+            setSelectedId(null);
+          }}
+          style={{
+            position: "absolute",
+            top: "10px",
+            right: "10px",
+            zIndex: 20,
+            backgroundColor: "#dc2626",
+            color: "#fff",
+            border: "none",
+            borderRadius: "6px",
+            padding: "6px 10px",
+            fontSize: "12px",
+            fontWeight: "bold",
+            cursor: "pointer",
+          }}
+          title="Delete selected asset"
+        >
+          Delete Selected
+        </button>
       )}
+
     </div>
   );
 };

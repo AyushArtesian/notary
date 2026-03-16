@@ -8,6 +8,8 @@ import CanvasBoard from "../components/CanvasBoard";
 import ScreenRecorder from "../components/ScreenRecorder";
 
 const STORAGE_KEY = "notary.ownerDocs";
+const ACTIVE_SESSIONS_KEY = "notary.ownerActiveSessions";
+const DASHBOARD_STATE_KEY = "notary.ownerDashboardState";
 
 const loadDocs = () => {
   try {
@@ -19,6 +21,22 @@ const loadDocs = () => {
 
 const saveDocs = (docs) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(docs));
+};
+
+const loadActiveSessions = () => {
+  try {
+    return JSON.parse(localStorage.getItem(ACTIVE_SESSIONS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+};
+
+const loadDashboardState = () => {
+  try {
+    return JSON.parse(localStorage.getItem(DASHBOARD_STATE_KEY) || "{}");
+  } catch {
+    return {};
+  }
 };
 
 const formatDate = (iso) => {
@@ -213,18 +231,19 @@ const NotarizeConfirmModal = ({ doc, onClose, onConfirm }) => {
 };
 
 const OwnerDashboardPage = () => {
+  const restoredDashboardState = loadDashboardState();
   const [docs, setDocs] = useState(loadDocs);
   const [notarizingDoc, setNotarizingDoc] = useState(null);
   const [sessionId, setSessionId] = useState("");
-  const [activeSessions, setActiveSessions] = useState({});
-  const [activeSessionDocId, setActiveSessionDocId] = useState(null);
+  const [activeSessions, setActiveSessions] = useState(loadActiveSessions);
+  const [activeSessionDocId, setActiveSessionDocId] = useState(restoredDashboardState.activeSessionDocId || null);
   const [notaries, setNotaries] = useState([]);
-  const [sessionDocName, setSessionDocName] = useState("");
+  const [sessionDocName, setSessionDocName] = useState(restoredDashboardState.sessionDocName || "");
   const [isConnected, setIsConnected] = useState(socket.connected);
-  const [sessionJoined, setSessionJoined] = useState(false);
+  const [sessionJoined, setSessionJoined] = useState(Boolean(restoredDashboardState.sessionJoined));
   const [editorElements, setEditorElements] = useState([]);
-  const [uploadedFile, setUploadedFile] = useState(null);
-  const [uploadedFileName, setUploadedFileName] = useState("");
+  const [uploadedFile, setUploadedFile] = useState(restoredDashboardState.uploadedFile || null);
+  const [uploadedFileName, setUploadedFileName] = useState(restoredDashboardState.uploadedFileName || "");
   const editorScrollRef = useRef(null);
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
@@ -233,6 +252,36 @@ const OwnerDashboardPage = () => {
     const id = localStorage.getItem("notary.ownerSessionId") || "";
     setSessionId(id);
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(ACTIVE_SESSIONS_KEY, JSON.stringify(activeSessions));
+  }, [activeSessions]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      DASHBOARD_STATE_KEY,
+      JSON.stringify({
+        activeSessionDocId,
+        sessionJoined,
+        sessionDocName,
+        uploadedFile,
+        uploadedFileName,
+      })
+    );
+  }, [activeSessionDocId, sessionJoined, sessionDocName, uploadedFile, uploadedFileName]);
+
+  useEffect(() => {
+    if (!activeSessionDocId || uploadedFile) return;
+
+    const doc = docs.find((d) => d.id === activeSessionDocId);
+    if (!doc?.dataUrl) return;
+
+    setUploadedFile(doc.dataUrl);
+    setUploadedFileName(doc.name || "document.pdf");
+    if (!sessionDocName) {
+      setSessionDocName(doc.name || "");
+    }
+  }, [activeSessionDocId, docs, uploadedFile, sessionDocName]);
 
   useEffect(() => {
     const onNotarySessionStarted = (data) => {
@@ -266,9 +315,9 @@ const OwnerDashboardPage = () => {
     };
   }, []);
 
-  // Join session when activeSessionDocId is set
+  // Join session when active session is selected (restores after refresh too)
   useEffect(() => {
-    if (!activeSessionDocId || sessionJoined) return;
+    if (!activeSessionDocId) return;
 
     const sessionIdToJoin = activeSessions[activeSessionDocId];
     if (!sessionIdToJoin) return;
@@ -304,7 +353,7 @@ const OwnerDashboardPage = () => {
       socket.off("usersConnected", onUsersConnected);
       socket.off("documentShared", onDocumentShared);
     };
-  }, [activeSessionDocId, activeSessions, sessionJoined]);
+  }, [activeSessionDocId, activeSessions]);
 
   const handleJoinSession = (doc) => {
     const sessionIdVal = activeSessions[doc.id];
@@ -359,6 +408,9 @@ const OwnerDashboardPage = () => {
     setNotaries([]);
     setSessionDocName("");
     setSessionJoined(false);
+    setUploadedFile(null);
+    setUploadedFileName("");
+    localStorage.removeItem(DASHBOARD_STATE_KEY);
   };
 
   const copySessionId = () => {
@@ -564,26 +616,45 @@ const OwnerDashboardPage = () => {
 
             <div
               ref={editorScrollRef}
-              style={{ position: "relative", width: EDITOR_WIDTH, border: "1px solid #ccc", backgroundColor: "#fff", flexShrink: 0 }}
+              style={{ overflowY: "auto", overflowX: "auto", maxHeight: "70vh", border: "1px solid #ccc", borderRadius: "5px", backgroundColor: "#fff", flexShrink: 0 }}
             >
               <h3 style={{ margin: "10px 15px" }}>Document Editor</h3>
               {uploadedFile ? (
-                <div style={{ position: "relative" }}>
+                <div
+                  style={{
+                    position: "relative",
+                    width: `${EDITOR_WIDTH}px`,
+                    height: `${EDITOR_HEIGHT}px`,
+                    backgroundColor: "white",
+                    margin: "0 15px 15px 15px",
+                  }}
+                >
                   <PdfViewer
                     file={uploadedFile}
-                    width={EDITOR_WIDTH}
-                    height={EDITOR_HEIGHT}
+                    containerHeight={`${EDITOR_HEIGHT}px`}
+                    showControls={false}
+                    pageWidth={EDITOR_WIDTH}
+                    noInternalScroll
                   />
-                  <CanvasBoard
-                    elements={editorElements}
-                    onElementAdd={handleEditorElementAdd}
-                    onElementUpdate={handleEditorElementUpdate}
-                    onElementRemove={handleEditorElementRemove}
-                    width={EDITOR_WIDTH}
-                    height={EDITOR_HEIGHT}
-                    userRole="owner"
-                    scrollContainerRef={editorScrollRef}
-                  />
+                  <div
+                    style={{ position: "absolute", inset: 0 }}
+                    onWheel={(e) => {
+                      if (editorScrollRef.current) {
+                        editorScrollRef.current.scrollTop += e.deltaY;
+                      }
+                    }}
+                  >
+                    <CanvasBoard
+                      elements={editorElements}
+                      onElementAdd={handleEditorElementAdd}
+                      onElementUpdate={handleEditorElementUpdate}
+                      onElementRemove={handleEditorElementRemove}
+                      canvasWidth={EDITOR_WIDTH}
+                      canvasHeight={EDITOR_HEIGHT}
+                      overlayMode
+                      showGuide={false}
+                    />
+                  </div>
                 </div>
               ) : (
                 <div style={{ height: "300px", display: "flex", alignItems: "center", justifyContent: "center", color: "#999" }}>

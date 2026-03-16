@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import SignaturePad from "./SignaturePad";
 import { fetchSignatures, saveSignature } from "../utils/apiClient";
 
-const SidebarAssets = ({ userRole, onAssetGenerated, showAssets = true }) => {
+const SidebarAssets = ({ userRole, onAssetGenerated, showAssets = true, uploadedAsset }) => {
   const [showSignaturePad, setShowSignaturePad] = useState(false);
   const [assets, setAssets] = useState([
     {
@@ -60,6 +60,16 @@ const SidebarAssets = ({ userRole, onAssetGenerated, showAssets = true }) => {
 
     loadSignatures();
   }, [userRole]);
+
+  // Add uploaded document as asset whenever it changes
+  useEffect(() => {
+    if (!uploadedAsset) return;
+
+    setAssets(prev => {
+      if (prev.some((a) => a.id === uploadedAsset.id)) return prev;
+      return [...prev, uploadedAsset];
+    });
+  }, [uploadedAsset]);
 
   const handleDragStart = (e, asset) => {
     // Prevent dragging when clicking the delete button
@@ -125,16 +135,16 @@ const SidebarAssets = ({ userRole, onAssetGenerated, showAssets = true }) => {
 
   // Filter assets based on user role
   const visibleAssets = assets.filter(asset => {
-    // For all users, show their own drawn signatures
-    if (asset.type === "signature" && asset.user === userRole) {
+    // For all users, show their own drawn signatures and uploaded images
+    if ((asset.type === "signature" || asset.type === "image") && asset.user === userRole) {
       return true;
     }
-    
-    // For notary only, show pre-made stamps and notary-specific assets
+
+    // For notary only, show pre-made stamps and notary/owner assets
     if (userRole === "notary") {
       return asset.user === "notary" || asset.user === "owner";
     }
-    
+
     // For owner, only show their own assets
     return false;
   });

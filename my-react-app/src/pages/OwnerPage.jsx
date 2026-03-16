@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { pdfjs } from "react-pdf";
 import { PDFDocument } from "pdf-lib";
 import PdfViewer from "../components/PdfViewer";
 import SidebarAssets from "../components/SidebarAssets";
@@ -14,11 +15,34 @@ const OwnerPage = () => {
   const [isConnected, setIsConnected] = useState(socket.connected);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [uploadedFileName, setUploadedFileName] = useState("");
+  const [uploadedAsset, setUploadedAsset] = useState(null);
   const [uploadError, setUploadError] = useState("");
   const [downloadError, setDownloadError] = useState("");
   const [isDownloading, setIsDownloading] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [elements, setElements] = useState([]);
+
+  const generatePdfThumbnail = async (pdfDataUrl, maxWidth = 180) => {
+    try {
+      const loadingTask = pdfjs.getDocument(pdfDataUrl);
+      const pdf = await loadingTask.promise;
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 1 });
+      const scale = Math.min(1, maxWidth / viewport.width);
+      const scaledViewport = page.getViewport({ scale });
+
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(scaledViewport.width);
+      canvas.height = Math.round(scaledViewport.height);
+      const context = canvas.getContext("2d");
+
+      await page.render({ canvasContext: context, viewport: scaledViewport }).promise;
+      return canvas.toDataURL("image/png");
+    } catch (error) {
+      console.warn("[OwnerPage] Failed to generate PDF thumbnail:", error);
+      return null;
+    }
+  };
   const [sessionId, setSessionId] = useState(null);
   const [connectedUsers, setConnectedUsers] = useState([]);
   const [notaryConnected, setNotaryConnected] = useState(false);
@@ -132,10 +156,25 @@ const OwnerPage = () => {
 
     // Emit full PDF data URL so the notary can view the document in their browser
     const reader = new FileReader();
-    reader.onload = () => {
-      const payload = { pdfDataUrl: reader.result, fileName: file.name };
-      setUploadedFile(reader.result);
+    reader.onload = async () => {
+      const pdfDataUrl = reader.result;
+      const payload = { pdfDataUrl, fileName: file.name };
+      setUploadedFile(pdfDataUrl);
       setUploadedFileName(file.name);
+
+      // Generate a thumbnail PNG from the first page of the PDF so it can be used as an image asset
+      const thumbnail = await generatePdfThumbnail(pdfDataUrl);
+      const assetImage = thumbnail ||
+        "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='8' y='8' width='48' height='48' rx='6' ry='6' fill='%23f44336'/%3E%3Cpath d='M22 18h20v4H22z' fill='%23fff'/%3E%3Cpath d='M22 28h20v4H22z' fill='%23fff'/%3E%3Cpath d='M22 38h20v4H22z' fill='%23fff'/%3E%3Cpath d='M22 48h12v4H22z' fill='%23fff'/%3E%3C/svg%3E";
+
+      setUploadedAsset({
+        id: `uploaded-doc-${Date.now()}`,
+        name: file.name,
+        type: "image",
+        image: assetImage,
+        user: "owner",
+      });
+
       socket.emit("documentShared", payload);
     };
     reader.readAsDataURL(file);
@@ -257,7 +296,7 @@ const OwnerPage = () => {
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       {/* Sidebar */}
-      <SidebarAssets userRole="owner" showAssets={true} />
+      <SidebarAssets userRole="owner" showAssets={true} uploadedAsset={uploadedAsset} />
 
       {/* Main Content */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "15px", overflowY: "auto" }}>
@@ -366,10 +405,10 @@ const OwnerPage = () => {
         {/* Main Content Area */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <h3 style={{ margin: "0 0 10px 0" }}>Document Editor</h3>
-          {uploadedFile ? (
+          {uploadedFile && (
             <div
               ref={editorScrollRef}
-              style={{ overflowY: "auto", overflowX: "auto", maxHeight: "70vh", border: "1px solid #ddd", borderRadius: "5px" }}
+              style={{ overflowY: "auto", overflowX: "auto", maxHeight: "70vh", border: "none", borderRadius: "5px", backgroundColor: "transparent" }}
             >
               <div
                 style={{
@@ -407,18 +446,6 @@ const OwnerPage = () => {
                   />
                 </div>
               </div>
-            </div>
-          ) : (
-            <div
-              style={{
-                border: "2px dashed #ccc",
-                padding: "20px",
-                textAlign: "center",
-                color: "#999",
-                borderRadius: "5px",
-              }}
-            >
-              Upload a document to start placing signatures and stamps
             </div>
           )}
         </div>
