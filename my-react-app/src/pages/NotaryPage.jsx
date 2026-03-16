@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import PdfViewer from "../components/PdfViewer";
 import SidebarAssets from "../components/SidebarAssets";
 import CanvasBoard from "../components/CanvasBoard";
@@ -56,6 +57,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
   const [uploadedAsset, setUploadedAsset] = useState(null);
   const editorScrollRef = useRef(null);
   const fileInputRef = useRef(null);
+  const navigate = useNavigate();
 
   // Auto-fill from URL param even if not passed as prop (direct URL open)
   const urlSessionId = normalizeSessionId(new URLSearchParams(window.location.search).get("sessionId"));
@@ -155,6 +157,25 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       params.set("sessionId", normalized);
       window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
     }
+  };
+
+  const handleEndSession = () => {
+    setSessionJoined(false);
+    setSessionId(null);
+    setInputSessionId("");
+    setElements([]);
+    setPdfDataUrl(null);
+    setDocumentInfo(null);
+    setOwnerConnected(false);
+    setConnectedUsers([]);
+
+    localStorage.removeItem("notary.lastSessionId");
+    const params = new URLSearchParams(window.location.search);
+    params.delete("sessionId");
+    params.delete("role");
+    window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
+
+    navigate("/notary/doc/dashboard");
   };
 
   useEffect(() => {
@@ -309,15 +330,32 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         <div style={{ marginBottom: "15px", backgroundColor: "#f3e5f5", padding: "15px", borderRadius: "5px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
             <h2 style={{ margin: 0 }}>✍️ Notary Dashboard</h2>
-            <span style={{
-              display: "inline-flex", alignItems: "center", gap: "5px",
-              padding: "4px 10px", borderRadius: "20px", fontSize: "13px", fontWeight: "bold",
-              backgroundColor: isConnected ? "#e8f5e9" : "#ffebee",
-              color: isConnected ? "#2e7d32" : "#c62828",
-              border: `1px solid ${isConnected ? "#a5d6a7" : "#ef9a9a"}`
-            }}>
-              {isConnected ? "● Server connected" : "● Server offline"}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: "5px",
+                padding: "4px 10px", borderRadius: "20px", fontSize: "13px", fontWeight: "bold",
+                backgroundColor: isConnected ? "#e8f5e9" : "#ffebee",
+                color: isConnected ? "#2e7d32" : "#c62828",
+                border: `1px solid ${isConnected ? "#a5d6a7" : "#ef9a9a"}`
+              }}>
+                {isConnected ? "● Server connected" : "● Server offline"}
+              </span>
+              <button
+                onClick={handleEndSession}
+                style={{
+                  padding: "6px 10px",
+                  backgroundColor: "#ef4444",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                  fontWeight: "600",
+                }}
+              >
+                End Session
+              </button>
+            </div>
           </div>
           <p style={{ margin: "8px 0 4px" }}>
             <strong>Session ID:</strong>{" "}

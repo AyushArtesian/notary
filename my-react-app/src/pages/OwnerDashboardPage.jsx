@@ -480,6 +480,8 @@ const OwnerDashboardPage = () => {
     setUploadedAsset(null);
     lastAutoSharedDocKeyRef.current = "";
     localStorage.removeItem(DASHBOARD_STATE_KEY);
+
+    navigate("/owner/doc/dashboard");
   };
 
   const restoreUploadedAssets = () => {
@@ -657,8 +659,25 @@ const OwnerDashboardPage = () => {
                   <h2 style={{ margin: 0, display: "inline" }}>✍️ Owner Dashboard</h2>
                 </div>
                 {activeSessions[activeSessionDocId] && (
-                  <div style={{ fontSize: "13px", color: "#555" }}>
-                    Session ID: <span style={{ fontWeight: 600 }}>{activeSessions[activeSessionDocId]}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "#555" }}>
+                    <div>
+                      Session ID: <span style={{ fontWeight: 600 }}>{activeSessions[activeSessionDocId]}</span>
+                    </div>
+                    <button
+                      onClick={handleExitSession}
+                      style={{
+                        padding: "6px 10px",
+                        backgroundColor: "#ef4444",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        fontSize: "12px",
+                        fontWeight: "600",
+                      }}
+                    >
+                      End Session
+                    </button>
                   </div>
                 )}
               </div>
