@@ -160,6 +160,13 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
   };
 
   const handleEndSession = () => {
+    // Emit event to notify owner that session is ending
+    if (sessionId) {
+      socket.emit('notarySessionEnded', {
+        sessionId: sessionId,
+      });
+    }
+
     setSessionJoined(false);
     setSessionId(null);
     setInputSessionId("");

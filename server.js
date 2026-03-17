@@ -541,6 +541,12 @@ io.on('connection', (socket) => {
     io.emit('notarySessionStarted', data);
   });
 
+  // Handle notary ending a session — broadcast to all connected clients
+  socket.on('notarySessionEnded', (data) => {
+    console.log('🔔 Notary ended session:', data);
+    io.emit('notarySessionEnded', data);
+  });
+
   // Handle element added (signature/stamp placement)
   socket.on('elementAdded', (element) => {
     const userSession = userSessions.get(socket.id);

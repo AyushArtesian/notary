@@ -250,7 +250,8 @@ const OwnerDashboardPage = () => {
   const [notarizingDoc, setNotarizingDoc] = useState(null);
   const [sessionId, setSessionId] = useState("");
   const [activeSessions, setActiveSessions] = useState(loadActiveSessions);
-  const [activeSessionDocId, setActiveSessionDocId] = useState(restoredDashboardState.activeSessionDocId || null);
+  // Don't restore activeSessionDocId - owner must explicitly click "Join the session" button
+  const [activeSessionDocId, setActiveSessionDocId] = useState(null);
   const [notaries, setNotaries] = useState([]);
   const [sessionDocName, setSessionDocName] = useState(restoredDashboardState.sessionDocName || "");
   const [isConnected, setIsConnected] = useState(socket.connected);
@@ -268,6 +269,11 @@ const OwnerDashboardPage = () => {
   useEffect(() => {
     const id = localStorage.getItem("notary.ownerSessionId") || "";
     setSessionId(id);
+    
+    // Clear any stale activeSessions from localStorage on mount
+    // Active sessions should only be populated when notary explicitly starts them
+    localStorage.removeItem(ACTIVE_SESSIONS_KEY);
+    setActiveSessions({});
   }, []);
 
   useEffect(() => {
@@ -278,14 +284,13 @@ const OwnerDashboardPage = () => {
     localStorage.setItem(
       DASHBOARD_STATE_KEY,
       JSON.stringify({
-        activeSessionDocId,
         sessionJoined,
         sessionDocName,
         uploadedFile,
         uploadedFileName,
       })
     );
-  }, [activeSessionDocId, sessionJoined, sessionDocName, uploadedFile, uploadedFileName]);
+  }, [sessionJoined, sessionDocName, uploadedFile, uploadedFileName]);
 
   useEffect(() => {
     saveUploadedAssets(uploadedAssets);
@@ -343,10 +348,27 @@ const OwnerDashboardPage = () => {
       });
     };
 
+    const onNotarySessionEnded = (data) => {
+      console.log('❌ Received notarySessionEnded event:', data);
+      setActiveSessions((prev) => {
+        const updated = { ...prev };
+        // Find and remove the session ID for the document with this sessionId
+        Object.keys(updated).forEach((docId) => {
+          if (updated[docId] === data.sessionId) {
+            delete updated[docId];
+          }
+        });
+        console.log('Updated activeSessions after session end:', updated);
+        return updated;
+      });
+    };
+
     socket.on('notarySessionStarted', onNotarySessionStarted);
+    socket.on('notarySessionEnded', onNotarySessionEnded);
 
     return () => {
       socket.off('notarySessionStarted', onNotarySessionStarted);
+      socket.off('notarySessionEnded', onNotarySessionEnded);
     };
   }, []);
 
