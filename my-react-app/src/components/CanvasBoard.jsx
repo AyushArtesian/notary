@@ -79,11 +79,16 @@ const DraggableImageElement = ({ element, onChange, onSelect, isSelected, notary
         y={element.y}
         width={element.width || 100}
         height={element.height || 100}
-        draggable
+        draggable={currentUserRole === "notary" || element.user === currentUserRole}
         onClick={() => onSelect(element.id)}
         onTap={() => onSelect(element.id)}
         onDragEnd={handleDragEnd}
         onTransformEnd={() => {
+          // Only allow transform if user owns the asset or is notary (notary can transform anything)
+          if (currentUserRole !== "notary" && element.user !== currentUserRole) {
+            return;
+          }
+
           const node = imageRef.current;
           if (!node) return;
 
@@ -107,7 +112,7 @@ const DraggableImageElement = ({ element, onChange, onSelect, isSelected, notary
         stroke={isSelected ? "blue" : ""}
         strokeWidth={isSelected ? 2 : 0}
       />
-      {isSelected && (
+      {isSelected && (currentUserRole === "notary" || element.user === currentUserRole) && (
         <Transformer
           ref={transformerRef}
           rotateEnabled={true}
