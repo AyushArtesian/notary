@@ -7,6 +7,7 @@ import NotaryPage from './pages/NotaryPage'
 import NotaryDocDashboardPage from './pages/NotaryDocDashboardPage'
 import AdminPage from './pages/AdminPage'
 import AuthPage from './pages/AuthPage'
+import AdminLoginPage from './pages/AdminLoginPage'
 import RegisterPage from './pages/RegisterPage'
 import './App.css'
 
@@ -83,6 +84,10 @@ function App() {
         <Route
           path="/register"
           element={<RegisterPage />}
+        />
+        <Route
+          path="/admin-login"
+          element={<AdminLoginPage />}
         />
         <Route
           path="/"

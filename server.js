@@ -291,6 +291,23 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// Get all users (for admin dashboard)
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await readUsers();
+    const usersList = users.map((user) => ({
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      createdAt: user.createdAt,
+    }));
+    res.json(usersList);
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
 // Signature API Endpoints
 
 // Get all signatures for a user role

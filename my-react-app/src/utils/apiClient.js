@@ -68,6 +68,22 @@ async function loginUser(credentials) {
   return payload;
 }
 
+async function fetchUsers() {
+  try {
+    const response = await fetchWithFallback('/api/users');
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: Failed to fetch users`);
+    }
+
+    const users = await response.json();
+    return Array.isArray(users) ? users : [];
+  } catch (error) {
+    console.error('[fetchUsers] ❌ Error:', error);
+    return [];
+  }
+}
+
 async function saveSignature(signatureData) {
   try {
     const url = '/api/signatures';
@@ -217,4 +233,4 @@ async function updateDocumentReview(documentId, notaryReview, notaryName) {
   }
 }
 
-export { saveSignature, fetchSignatures, deleteSignature, registerUser, loginUser, saveDocument, fetchNotarizedDocuments, updateDocumentReview, API_BASE_URL };
+export { saveSignature, fetchSignatures, deleteSignature, registerUser, loginUser, fetchUsers, saveDocument, fetchNotarizedDocuments, updateDocumentReview, API_BASE_URL };

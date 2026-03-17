@@ -87,6 +87,10 @@ const AuthPage = () => {
     navigate('/register', { state: { from: location.state?.from } })
   }
 
+  const moveToAdminLogin = () => {
+    navigate('/admin-login')
+  }
+
   return (
     <div className="auth-page">
       <div className="auth-card">
@@ -130,6 +134,12 @@ const AuthPage = () => {
           New here?{' '}
           <button type="button" className="auth-switch-link" onClick={moveToRegister}>
             Register
+          </button>
+        </p>
+
+        <p className="auth-switch">
+          <button type="button" className="auth-switch-link" onClick={moveToAdminLogin}>
+            Login as Admin
           </button>
         </p>
       </div>
