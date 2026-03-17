@@ -474,6 +474,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
                     showGuide={false}
                     isAssetBoxMode={isAssetBoxMode}
                     onCreateAssetBox={handleCreateAssetBox}
+                    currentUserRole="notary"
                   />
                 </div>
               </div>

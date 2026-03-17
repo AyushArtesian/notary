@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { pdfjs } from "react-pdf";
 import { PDFDocument } from "pdf-lib";
 import PdfViewer from "../components/PdfViewer";
@@ -11,7 +12,20 @@ const EDITOR_WIDTH = 900;
 const EDITOR_HEIGHT = 1300;
 
 const OwnerPage = () => {
+  const navigate = useNavigate();
   const editorScrollRef = useRef(null);
+  
+  // Redirect to dashboard if no sessionId in URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get("sessionId");
+    
+    if (!sessionId) {
+      navigate("/owner/doc/dashboard", { replace: true });
+      return;
+    }
+  }, [navigate]);
+  
   const [isConnected, setIsConnected] = useState(socket.connected);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [uploadedFileName, setUploadedFileName] = useState("");
@@ -444,6 +458,7 @@ const OwnerPage = () => {
                     canvasHeight={EDITOR_HEIGHT}
                     overlayMode
                     showGuide={false}
+                    currentUserRole="owner"
                   />
                 </div>
               </div>

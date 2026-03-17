@@ -101,9 +101,14 @@ const CanvasBoard = ({
   overlayMode = false,
   isAssetBoxMode = false,
   onCreateAssetBox,
+  currentUserRole = 'owner',
 }) => {
   const stageRef = useRef(null);
   const [selectedId, setSelectedId] = useState(null);
+
+  const selectedElement = elements.find((el) => el.id === selectedId);
+  // Notary can delete any asset; Owner can only delete their own
+  const canDelete = !selectedElement || currentUserRole === 'notary' || selectedElement.user === currentUserRole;
 
   const handleElementChange = (id, updates) => {
     onElementUpdate(id, updates);
@@ -224,7 +229,7 @@ const CanvasBoard = ({
         </Layer>
       </Stage>
 
-      {selectedId && (
+      {selectedId && canDelete && (
         <button
           type="button"
           onClick={() => {
@@ -249,6 +254,27 @@ const CanvasBoard = ({
         >
           Delete Selected
         </button>
+      )}
+
+      {selectedId && !canDelete && (
+        <div
+          style={{
+            position: "absolute",
+            top: "10px",
+            right: "10px",
+            zIndex: 20,
+            backgroundColor: "#fca5ac",
+            color: "#7c2d3b",
+            border: "1px solid #dc2626",
+            borderRadius: "6px",
+            padding: "8px 12px",
+            fontSize: "12px",
+            fontWeight: "bold",
+          }}
+          title="Only the user who added this asset can delete it"
+        >
+          ⚠️ Cannot delete (added by {selectedElement?.user})
+        </div>
       )}
 
     </div>
