@@ -428,12 +428,40 @@ const OwnerDashboardPage = () => {
       setSessionDocName(data.fileName || "");
     };
 
+    const onElementAdded = (element) => {
+      setEditorElements((prev) => {
+        if (prev.some((existingElement) => existingElement.id === element.id)) {
+          return prev;
+        }
+
+        return [...prev, element];
+      });
+    };
+
+    const onElementUpdated = (updatedElement) => {
+      setEditorElements((prev) =>
+        prev.map((element) =>
+          element.id === updatedElement.id ? updatedElement : element
+        )
+      );
+    };
+
+    const onElementRemoved = (elementId) => {
+      setEditorElements((prev) => prev.filter((element) => element.id !== elementId));
+    };
+
     socket.on("usersConnected", onUsersConnected);
     socket.on("documentShared", onDocumentShared);
+    socket.on("elementAdded", onElementAdded);
+    socket.on("elementUpdated", onElementUpdated);
+    socket.on("elementRemoved", onElementRemoved);
 
     return () => {
       socket.off("usersConnected", onUsersConnected);
       socket.off("documentShared", onDocumentShared);
+      socket.off("elementAdded", onElementAdded);
+      socket.off("elementUpdated", onElementUpdated);
+      socket.off("elementRemoved", onElementRemoved);
     };
   }, [activeSessionDocId, activeSessions]);
 
