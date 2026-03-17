@@ -12,6 +12,7 @@ const STORAGE_KEY = "notary.ownerDocs";
 const ACTIVE_SESSIONS_KEY = "notary.ownerActiveSessions";
 const DASHBOARD_STATE_KEY = "notary.ownerDashboardState";
 const UPLOADED_ASSETS_KEY = "notary.ownerUploadedAssets";
+const EDITOR_ELEMENTS_KEY = "notary.ownerEditorElements";
 
 const loadUploadedAssets = () => {
   try {
@@ -51,6 +52,18 @@ const loadDashboardState = () => {
   } catch {
     return {};
   }
+};
+
+const loadEditorElements = () => {
+  try {
+    return JSON.parse(localStorage.getItem(EDITOR_ELEMENTS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+};
+
+const saveEditorElements = (elements) => {
+  localStorage.setItem(EDITOR_ELEMENTS_KEY, JSON.stringify(elements));
 };
 
 const formatDate = (iso) => {
@@ -250,13 +263,13 @@ const OwnerDashboardPage = () => {
   const [notarizingDoc, setNotarizingDoc] = useState(null);
   const [sessionId, setSessionId] = useState("");
   const [activeSessions, setActiveSessions] = useState(loadActiveSessions);
-  // Don't restore activeSessionDocId - owner must explicitly click "Join the session" button
-  const [activeSessionDocId, setActiveSessionDocId] = useState(null);
+  // Restore activeSessionDocId to maintain session state on page refresh
+  const [activeSessionDocId, setActiveSessionDocId] = useState(restoredDashboardState.activeSessionDocId || null);
   const [notaries, setNotaries] = useState([]);
   const [sessionDocName, setSessionDocName] = useState(restoredDashboardState.sessionDocName || "");
   const [isConnected, setIsConnected] = useState(socket.connected);
   const [sessionJoined, setSessionJoined] = useState(Boolean(restoredDashboardState.sessionJoined));
-  const [editorElements, setEditorElements] = useState([]);
+  const [editorElements, setEditorElements] = useState(() => loadEditorElements());
   const [uploadedFile, setUploadedFile] = useState(restoredDashboardState.uploadedFile || null);
   const [uploadedFileName, setUploadedFileName] = useState(restoredDashboardState.uploadedFileName || "");
   const [uploadedAssets, setUploadedAssets] = useState(() => loadUploadedAssets());
@@ -269,11 +282,6 @@ const OwnerDashboardPage = () => {
   useEffect(() => {
     const id = localStorage.getItem("notary.ownerSessionId") || "";
     setSessionId(id);
-    
-    // Clear any stale activeSessions from localStorage on mount
-    // Active sessions should only be populated when notary explicitly starts them
-    localStorage.removeItem(ACTIVE_SESSIONS_KEY);
-    setActiveSessions({});
   }, []);
 
   useEffect(() => {
@@ -284,17 +292,22 @@ const OwnerDashboardPage = () => {
     localStorage.setItem(
       DASHBOARD_STATE_KEY,
       JSON.stringify({
+        activeSessionDocId,
         sessionJoined,
         sessionDocName,
         uploadedFile,
         uploadedFileName,
       })
     );
-  }, [sessionJoined, sessionDocName, uploadedFile, uploadedFileName]);
+  }, [activeSessionDocId, sessionJoined, sessionDocName, uploadedFile, uploadedFileName]);
 
   useEffect(() => {
     saveUploadedAssets(uploadedAssets);
   }, [uploadedAssets]);
+
+  useEffect(() => {
+    saveEditorElements(editorElements);
+  }, [editorElements]);
 
   useEffect(() => {
     if (!activeSessionDocId || uploadedFile) return;
@@ -446,7 +459,7 @@ const OwnerDashboardPage = () => {
         socket.emit("documentShared", { pdfDataUrl: doc.dataUrl, fileName: doc.name || "document.pdf" });
       }
     }
-    setEditorElements([]);
+    // Don't clear editorElements - they should persist across sessions
     setSessionJoined(true);
   };
 
@@ -502,6 +515,12 @@ const OwnerDashboardPage = () => {
     setUploadedAsset(null);
     lastAutoSharedDocKeyRef.current = "";
     localStorage.removeItem(DASHBOARD_STATE_KEY);
+    // Also clear the active session for this document when exiting
+    setActiveSessions((prev) => {
+      const updated = { ...prev };
+      delete updated[activeSessionDocId];
+      return updated;
+    });
 
     navigate("/owner/doc/dashboard");
   };

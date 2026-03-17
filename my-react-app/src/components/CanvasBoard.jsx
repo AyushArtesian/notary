@@ -60,8 +60,10 @@ const DraggableImageElement = ({ element, onChange, onSelect, isSelected }) => {
             y: node.y(),
             width: Math.max(minSize, node.width() * scaleX),
             height: Math.max(minSize, node.height() * scaleY),
+            rotation: node.rotation(),
           });
         }}
+        rotation={element.rotation || 0}
         opacity={isSelected ? 0.8 : 1}
         stroke={isSelected ? "blue" : ""}
         strokeWidth={isSelected ? 2 : 0}
@@ -69,7 +71,7 @@ const DraggableImageElement = ({ element, onChange, onSelect, isSelected }) => {
       {isSelected && (
         <Transformer
           ref={transformerRef}
-          rotateEnabled={false}
+          rotateEnabled={true}
           enabledAnchors={[
             "top-left",
             "top-right",
@@ -167,6 +169,13 @@ const CanvasBoard = ({
     e.preventDefault();
   };
 
+  const handleStageClick = (e) => {
+    // Deselect when clicking on empty stage area (not on elements)
+    if (e.target === e.target.getStage()) {
+      setSelectedId(null);
+    }
+  };
+
   return (
     <div
       className="canvas-board"
@@ -182,7 +191,7 @@ const CanvasBoard = ({
         position: "relative",
       }}
     >
-      <Stage ref={stageRef} width={canvasWidth} height={canvasHeight}>
+      <Stage ref={stageRef} width={canvasWidth} height={canvasHeight} onClick={handleStageClick}>
         <Layer>
           {/* Render all elements */}
           {elements.map((element) => (
