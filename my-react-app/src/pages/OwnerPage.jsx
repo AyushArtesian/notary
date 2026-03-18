@@ -105,11 +105,19 @@ const OwnerPage = () => {
     params.set("sessionId", roomId);
     window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
 
+    const authUser = (() => {
+      try {
+        return JSON.parse(localStorage.getItem('notary.authUser') || 'null') || {};
+      } catch {
+        return {};
+      }
+    })();
+
     socket.emit("joinSession", {
       roomId,
       role: "owner",
-      userId: socket.id,
-      username: (() => { try { return JSON.parse(localStorage.getItem('notary.authUser') || 'null')?.username || 'Owner'; } catch { return 'Owner'; } })(),
+      userId: authUser.userId || socket.id,
+      username: authUser.username || "Owner",
     });
 
     // Listen for element updates from notary

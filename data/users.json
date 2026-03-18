@@ -26,5 +26,12 @@
     "passwordHash": "cabeba77d9ae46453d271f80ec29404a:df8d1c4c06a204ef4557438c17ab5f900a735ccee78c564c332c3e9b1bef73f4159d4fa68ac03761f17b8008e1cc4733c7879452998239d738e0f8b35a8e7224",
     "role": "owner",
     "createdAt": "2026-03-18T08:47:43.325Z"
+  },
+  {
+    "username": "ayush",
+    "email": "ayushartesian@gmail.com",
+    "passwordHash": "cd7ac529375edaee6c2bd01224320fb5:46a24b23b7cad675f300f33a141fa4516ea928dc249a814020cfae23e2d480173ebca5ef155000aac47221b6b440f0f08d97f962fbbc383eaecea3ecb077202f",
+    "role": "owner",
+    "createdAt": "2026-03-18T10:17:03.232Z"
   }
 ]

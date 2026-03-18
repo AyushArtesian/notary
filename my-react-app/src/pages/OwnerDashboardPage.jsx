@@ -475,7 +475,7 @@ const OwnerDashboardPage = () => {
     socket.emit("joinSession", {
       roomId: sessionIdToJoin,
       role: "owner",
-      userId: socket.id,
+      userId: authUser?.userId || socket.id,
       username: authUser?.username || "Owner",
     });
 

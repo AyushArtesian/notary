@@ -88,6 +88,18 @@ const documentSchema = new mongoose.Schema({
 
 const Document = mongoose.model('Document', documentSchema);
 
+// User Schema (stored in MongoDB)
+const userSchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true },
+  username: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true, lowercase: true },
+  passwordHash: { type: String, required: true },
+  role: { type: String, enum: ['owner', 'notary', 'admin'], required: true },
+  createdAt: { type: Date, default: Date.now },
+});
+
+const User = mongoose.model('User', userSchema);
+
 // Store active sessions and users
 const sessions = new Map();
 const userSessions = new Map();
@@ -160,6 +172,7 @@ const verifyPassword = (password, hashedPassword) => {
 const createToken = (user) => {
   const payload = {
     sub: user.username,
+    userId: user.userId,
     role: user.role,
     iat: Date.now(),
   };
@@ -200,6 +213,9 @@ app.get('/api/sessions', (req, res) => {
   res.json(sessionData);
 });
 
+// Helper for case-insensitive username matching
+const escapeRegExp = (string) => String(string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // Auth API Endpoints
 app.post('/api/auth/register', async (req, res) => {
   try {
@@ -229,38 +245,38 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Password and New Password must match.' });
     }
 
-    const users = await readUsers();
-    const usernameTaken = users.some(
-      (user) => String(user.username || '').toLowerCase() === username.toLowerCase()
-    );
+    // Check against stored users in MongoDB
+    const existingUser = await User.findOne({
+      $or: [
+        { username: { $regex: new RegExp(`^${escapeRegExp(username)}$`, 'i') } },
+        { email },
+      ],
+    });
 
-    if (usernameTaken) {
-      return res.status(409).json({ error: 'Username is already registered.' });
-    }
-
-    const emailTaken = users.some(
-      (user) => String(user.email || '').toLowerCase() === email
-    );
-
-    if (emailTaken) {
+    if (existingUser) {
+      if (existingUser.username.toLowerCase() === username.toLowerCase()) {
+        return res.status(409).json({ error: 'Username is already registered.' });
+      }
       return res.status(409).json({ error: 'Email is already registered.' });
     }
 
-    users.push({
+    const userId = crypto.randomUUID();
+
+    const newUser = await User.create({
+      userId,
       username,
       email,
       passwordHash: hashPassword(password),
       role,
-      createdAt: new Date().toISOString(),
     });
-    await writeUsers(users);
 
     return res.status(201).json({
       message: 'Registration successful.',
       user: {
-        username,
-        email,
-        role,
+        userId: newUser.userId,
+        username: newUser.username,
+        email: newUser.email,
+        role: newUser.role,
       },
     });
   } catch (error) {
@@ -278,10 +294,9 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Username and password are required.' });
     }
 
-    const users = await readUsers();
-    const user = users.find(
-      (entry) => String(entry.username || '').toLowerCase() === username.toLowerCase()
-    );
+    const user = await User.findOne({
+      username: { $regex: new RegExp(`^${escapeRegExp(username)}$`, 'i') },
+    });
 
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ error: 'Invalid username or password.' });
@@ -290,6 +305,7 @@ app.post('/api/auth/login', async (req, res) => {
     return res.json({
       token: createToken(user),
       user: {
+        userId: user.userId,
         username: user.username,
         email: user.email,
         role: user.role,
@@ -304,8 +320,9 @@ app.post('/api/auth/login', async (req, res) => {
 // Get all users (for admin dashboard)
 app.get('/api/users', async (req, res) => {
   try {
-    const users = await readUsers();
+    const users = await User.find().sort({ createdAt: -1 }).lean();
     const usersList = users.map((user) => ({
+      userId: user.userId,
       username: user.username,
       email: user.email,
       role: user.role,

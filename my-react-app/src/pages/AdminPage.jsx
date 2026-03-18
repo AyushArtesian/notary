@@ -40,6 +40,7 @@ const AdminPage = () => {
             <table className="admin-table">
               <thead>
                 <tr>
+                  <th>User ID</th>
                   <th>Username</th>
                   <th>Email</th>
                   <th>Role</th>
@@ -49,6 +50,7 @@ const AdminPage = () => {
               <tbody>
                 {users.map((user, index) => (
                   <tr key={index}>
+                    <td className="admin-user-id">{user.userId}</td>
                     <td>{user.username}</td>
                     <td>{user.email}</td>
                     <td>

@@ -29,7 +29,7 @@ const OwnerSessionPage = () => {
     socket.emit("joinSession", {
       roomId: id,
       role: "owner",
-      userId: socket.id,
+      userId: authUser?.userId || socket.id,
       username: authUser?.username || "Owner",
     });
 

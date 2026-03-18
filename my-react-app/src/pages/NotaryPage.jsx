@@ -117,11 +117,19 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
 
   useEffect(() => {
     if (sessionJoined && sessionId) {
+      const authUser = (() => {
+        try {
+          return JSON.parse(localStorage.getItem('notary.authUser') || 'null') || {};
+        } catch {
+          return {};
+        }
+      })();
+
       socket.emit("joinSession", {
         roomId: sessionId,
         role: "notary",
-        userId: socket.id,
-        username: (() => { try { return JSON.parse(localStorage.getItem('notary.authUser') || 'null')?.username || 'Notary'; } catch { return 'Notary'; } })(),
+        userId: authUser.userId || socket.id,
+        username: authUser.username || "Notary",
       });
 
       // Listen for element updates from owner

@@ -63,6 +63,7 @@ const AuthPage = () => {
       localStorage.setItem(
         AUTH_STORAGE_KEY,
         JSON.stringify({
+          userId: result.user.userId,
           username: result.user.username,
           email: result.user.email,
           role: result.user.role,
