@@ -34,7 +34,8 @@ const corsOptions = {
     'http://localhost:5173',
     'http://localhost:5174',
     FRONTEND_URL,
-    'https://notary-platform.vercel.app', // Update with your Vercel domain
+    'https://notaryqwe45r67857.vercel.app', // Your actual Vercel domain
+    'https://notary-platform.vercel.app', // Fallback Vercel domain
   ],
   methods: ['GET', 'POST', 'DELETE', 'PUT'],
   credentials: true,
