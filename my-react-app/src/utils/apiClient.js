@@ -1,10 +1,15 @@
 // API Client for backend communication
-const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+const configuredApiBaseUrl =
+  import.meta.env.VITE_API_URL ||
+  import.meta.env.VITE_REACT_APP_SERVER_URL ||
+  import.meta.env.VITE_API_BASE_URL;
+
+const isDev = Boolean(import.meta.env.DEV);
 const API_BASE_CANDIDATES = [
   configuredApiBaseUrl,
-  'http://localhost:5001',
-  'http://localhost:5002',
-  'http://localhost:5000',
+  ...(isDev
+    ? ['http://localhost:5001', 'http://localhost:5002', 'http://localhost:5000']
+    : []),
 ].filter(Boolean);
 
 let lastWorkingApiBaseUrl = API_BASE_CANDIDATES[0];
@@ -30,7 +35,7 @@ async function fetchWithFallback(path, options = {}) {
   throw networkError || new Error('Unable to connect to backend server');
 }
 
-const API_BASE_URL = configuredApiBaseUrl || 'http://localhost:5001';
+const API_BASE_URL = configuredApiBaseUrl || (isDev ? 'http://localhost:5001' : '');
 
 console.log('[API Client] Base URL:', API_BASE_URL);
 
