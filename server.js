@@ -172,6 +172,15 @@ const createToken = (user) => {
 };
 
 // Health check endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Notarization Platform - Backend Server',
+    status: 'Running',
+    environment: NODE_ENV,
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'Server is running', 
