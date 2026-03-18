@@ -34,15 +34,18 @@ const NotaryDocDashboardPage = () => {
   const [loading, setLoading] = useState(true)
 
   const handleStartSession = (doc) => {
-    const sessionId = `notary-session-${doc.id}`
-    console.log('📤 Emitting notarySessionStarted:', { documentId: doc.id, sessionId })
-    // Broadcast to owner that a session has started for this document
-    socket.emit('notarySessionStarted', {
-      documentId: doc.id,
-      sessionId: sessionId,
-    })
-    navigate(`/notary?sessionId=${encodeURIComponent(sessionId)}&role=notary`)
-  }
+    if (!doc.sessionId) {
+      console.error('❌ Document has no sessionId!', doc);
+      alert('Error: Session ID not available. Please try again.');
+      return;
+    }
+
+    console.log('📤 Notary Starting Session:', { documentId: doc.id, sessionId: doc.sessionId });
+    
+    // Navigate with a flag to indicate this is a fresh session start
+    // The NotaryPage will emit 'notarySessionStarted' once it's loaded and connected
+    navigate(`/notary?sessionId=${encodeURIComponent(doc.sessionId)}&role=notary&sessionStarted=true&documentId=${encodeURIComponent(doc.id)}`);
+  };
 
   // Load documents from backend on component mount
   useEffect(() => {
@@ -198,8 +201,12 @@ const NotaryDocDashboardPage = () => {
                   >
                     {reviewStatus}
                   </span>
+                  
+                  <span style={{ color: '#475569', fontSize: '12px', fontFamily: 'monospace' }}>
+                    {doc.sessionId ? doc.sessionId.substring(0, 20) + '...' : '-'}
+                  </span>
 
-                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <div style={{ display: 'flex', gap: '8px' }}>
                     {reviewStatus === 'accepted' ? (
                       <button
                         onClick={() => handleStartSession(doc)}
@@ -211,14 +218,13 @@ const NotaryDocDashboardPage = () => {
                           fontWeight: 600,
                           padding: '8px 12px',
                           cursor: 'pointer',
+                          fontSize: '12px',
                         }}
+                        title="Start a session with this document"
                       >
-                        Start Session
+                        Start
                       </button>
                     ) : null}
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '8px' }}>
                     <button
                       onClick={() => handleDecision(doc.id, 'accepted')}
                       style={{
@@ -229,6 +235,7 @@ const NotaryDocDashboardPage = () => {
                         fontWeight: 600,
                         padding: '8px 12px',
                         cursor: 'pointer',
+                        fontSize: '12px',
                       }}
                     >
                       Accept
@@ -243,6 +250,7 @@ const NotaryDocDashboardPage = () => {
                         fontWeight: 600,
                         padding: '8px 12px',
                         cursor: 'pointer',
+                        fontSize: '12px',
                       }}
                     >
                       Reject

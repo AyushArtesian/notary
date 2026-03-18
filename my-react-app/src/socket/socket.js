@@ -2,6 +2,11 @@ import io from "socket.io-client";
 
 // Detect socket server URL from environment or API base
 const getSocketUrl = () => {
+  // In development, connect to localhost
+  if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+    return `http://localhost:5000`;
+  }
+  
   const env = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
   if (env) {
     return env;

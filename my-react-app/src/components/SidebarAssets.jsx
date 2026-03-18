@@ -67,6 +67,8 @@ const createTextAssetImage = (text) => {
 
 const SidebarAssets = ({
   userRole,
+  sessionId,
+  userId,
   onAssetGenerated,
   showAssets = true,
   uploadedAsset,
@@ -90,7 +92,7 @@ const SidebarAssets = ({
   useEffect(() => {
     const loadSignatures = async () => {
       try {
-        const savedSignatures = await fetchSignatures(userRole);
+        const savedSignatures = await fetchSignatures(userRole, { sessionId, userId });
         console.log('[SidebarAssets] ✅ Loaded', savedSignatures.length, 'signatures');
         
         // Add saved signatures to assets with the proper structure
@@ -183,21 +185,36 @@ const SidebarAssets = ({
     setAssets(prev => [...prev, newAsset]);
     onAssetGenerated?.(newAsset);
 
-    // Save to backend asynchronously
-    try {
-      console.log("💾 Saving signature to MongoDB...");
-      const result = await saveSignature({
-        id: newAsset.id,
-        name: newAsset.name,
-        image: signatureImage,
-        userRole: userRole,
-      });
-      console.log("✅ Signature saved to backend successfully:", result.id);
-    } catch (error) {
-      console.error("❌ Error saving signature to backend:", error);
-      console.warn("Signature is saved locally but backend persistence failed.");
+    // Save to backend asynchronously (only when we have session + user context)
+    if (sessionId && userId) {
+      try {
+        console.log("💾 Saving signature to MongoDB...");
+        const authUsername = (() => {
+          try {
+            return JSON.parse(localStorage.getItem('notary.authUser') || 'null')?.username;
+          } catch {
+            return undefined;
+          }
+        })();
+
+        const result = await saveSignature({
+          id: newAsset.id,
+          sessionId,
+          userId,
+          username: authUsername,
+          name: newAsset.name,
+          image: signatureImage,
+          userRole: userRole,
+        });
+        console.log("✅ Signature saved to backend successfully:", result.id);
+      } catch (error) {
+        console.error("❌ Error saving signature to backend:", error);
+        console.warn("Signature is saved locally but backend persistence failed.");
+      }
+    } else {
+      console.warn('Skipping backend signature save: missing sessionId or userId');
     }
-    
+
     setShowSignaturePad(false);
   };
 

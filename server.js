@@ -12,12 +12,13 @@ require('dotenv').config();
 
 const express = require('express');
 const http = require('http');
+const net = require('net');
 const socketIO = require('socket.io');
 const cors = require('cors');
-const mongoose = require('mongoose');
-const fs = require('fs/promises');
+const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const initSqlJs = require('sql.js');
 
 const app = express();
 const server = http.createServer(app);
@@ -49,56 +50,317 @@ const io = socketIO(server, {
 app.use(cors(corsOptions));
 app.use(express.json());
 
-// MongoDB Connection
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/notary-platform';
+// Setup SQLite database (using sql.js in Node to avoid native build tool requirements)
+const dbPath = path.resolve(__dirname, 'data', 'notary.db');
+if (!fs.existsSync(path.dirname(dbPath))) {
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+}
 
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('✅ MongoDB connected'))
-.catch((err) => console.warn('⚠️  MongoDB connection warning:', err.message));
+let SQL;
+let db;
 
-// Signature Schema
-const signatureSchema = new mongoose.Schema({
-  id: { type: String, unique: true, required: true },
-  name: String,
-  image: { type: String, required: true }, // Base64 data URL
-  userRole: String,
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now },
-});
+const initSql = `
+CREATE TABLE IF NOT EXISTS users (
+  userId TEXT PRIMARY KEY,
+  username TEXT UNIQUE NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  passwordHash TEXT NOT NULL,
+  role TEXT NOT NULL,
+  createdAt INTEGER NOT NULL
+);
 
-const Signature = mongoose.model('Signature', signatureSchema);
+CREATE TABLE IF NOT EXISTS documents (
+  id TEXT PRIMARY KEY,
+  sessionId TEXT NOT NULL,
+  ownerId TEXT,
+  ownerName TEXT NOT NULL,
+  notaryId TEXT,
+  notaryName TEXT,
+  name TEXT NOT NULL,
+  size INTEGER,
+  type TEXT,
+  uploadedAt INTEGER NOT NULL,
+  notarized INTEGER NOT NULL DEFAULT 0,
+  notarizedAt INTEGER,
+  notaryReview TEXT DEFAULT 'pending',
+  notaryReviewedAt INTEGER
+);
 
-// Document Schema for notarized documents
-const documentSchema = new mongoose.Schema({
-  id: { type: String, unique: true, required: true },
-  name: { type: String, required: true },
-  ownerName: { type: String, required: true },
-  size: Number,
-  type: String,
-  uploadedAt: { type: Date, default: Date.now },
-  notarized: { type: Boolean, default: false },
-  notarizedAt: Date,
-  notaryReview: { type: String, enum: ['pending', 'accepted', 'rejected'], default: 'pending' },
-  notaryReviewedAt: Date,
-  notaryName: String,
-});
+CREATE TABLE IF NOT EXISTS signatures (
+  id TEXT PRIMARY KEY,
+  sessionId TEXT NOT NULL,
+  userId TEXT,
+  username TEXT,
+  name TEXT,
+  image TEXT NOT NULL,
+  userRole TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
 
-const Document = mongoose.model('Document', documentSchema);
+CREATE TABLE IF NOT EXISTS sessions (
+  sessionId TEXT PRIMARY KEY,
+  ownerId TEXT,
+  ownerUsername TEXT,
+  notaryIds TEXT,
+  participants TEXT,
+  active INTEGER DEFAULT 1,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
+`;
 
-// User Schema (stored in MongoDB)
-const userSchema = new mongoose.Schema({
-  userId: { type: String, required: true, unique: true },
-  username: { type: String, required: true, unique: true },
-  email: { type: String, required: true, unique: true, lowercase: true },
-  passwordHash: { type: String, required: true },
-  role: { type: String, enum: ['owner', 'notary', 'admin'], required: true },
-  createdAt: { type: Date, default: Date.now },
-});
+const now = () => Math.floor(Date.now());
 
-const User = mongoose.model('User', userSchema);
+function persistDatabase() {
+  if (!db) return;
+  const data = db.export();
+  fs.writeFileSync(dbPath, Buffer.from(data));
+}
+
+function normalizeParams(params = {}) {
+  if (!params || typeof params !== 'object') return params;
+  const normalized = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (key.startsWith(':') || key.startsWith('@') || key.startsWith('$')) {
+      normalized[key] = value;
+    } else {
+      normalized[`:${key}`] = value;
+    }
+  }
+  return normalized;
+}
+
+function dbGet(sql, params = {}) {
+  const stmt = db.prepare(sql);
+  stmt.bind(normalizeParams(params));
+
+  const hasRow = stmt.step();
+  if (!hasRow) {
+    stmt.free();
+    return null;
+  }
+
+  const row = stmt.getAsObject();
+  stmt.free();
+
+  // Ensure we didn't get a row with all undefined (sql.js quirk)
+  const hasValue = Object.values(row).some((value) => value !== undefined && value !== null);
+  return hasValue ? row : null;
+}
+
+function dbAll(sql, params = {}) {
+  const stmt = db.prepare(sql);
+  stmt.bind(normalizeParams(params));
+  const rows = [];
+  while (stmt.step()) {
+    rows.push(stmt.getAsObject());
+  }
+  stmt.free();
+  return rows;
+}
+
+function dbRun(sql, params = {}) {
+  const stmt = db.prepare(sql);
+  stmt.bind(normalizeParams(params));
+  stmt.step();
+  stmt.free();
+}
+
+async function initDatabase() {
+  SQL = await initSqlJs({
+    locateFile: (file) => path.join(__dirname, 'node_modules', 'sql.js', 'dist', file),
+  });
+
+  if (fs.existsSync(dbPath)) {
+    const buffer = fs.readFileSync(dbPath);
+    db = new SQL.Database(new Uint8Array(buffer));
+  } else {
+    db = new SQL.Database();
+  }
+
+  db.exec(initSql);
+  setupPreparedStatements();
+  persistDatabase();
+}
+
+// Prepared statements (initialized when the database is ready)
+let insertOrUpdateSignature;
+let selectSignaturesByRole;
+let deleteSignatureById;
+
+let insertOrUpdateDocument;
+let selectDocuments;
+let selectNotarizedDocuments;
+let updateDocumentReview;
+let selectDocumentById;
+
+let selectUserByUsername;
+let selectUserByEmail;
+let selectUserById;
+let insertUser;
+let selectAllUsers;
+
+function setupPreparedStatements() {
+  insertOrUpdateSignature = db.prepare(`
+    INSERT INTO signatures (id, sessionId, userId, username, name, image, userRole, createdAt, updatedAt)
+    VALUES (:id, :sessionId, :userId, :username, :name, :image, :userRole, :createdAt, :updatedAt)
+    ON CONFLICT(id) DO UPDATE SET
+      sessionId = excluded.sessionId,
+      userId = excluded.userId,
+      username = excluded.username,
+      name = excluded.name,
+      image = excluded.image,
+      userRole = excluded.userRole,
+      updatedAt = excluded.updatedAt
+  `);
+
+  selectSignaturesByRole = db.prepare(`
+    SELECT * FROM signatures
+    WHERE userRole = :userRole
+      AND (:sessionId IS NULL OR sessionId = :sessionId)
+      AND (:userId IS NULL OR userId = :userId)
+    ORDER BY createdAt DESC
+  `);
+
+  deleteSignatureById = db.prepare(`DELETE FROM signatures WHERE id = :id`);
+
+  insertOrUpdateDocument = db.prepare(`
+    INSERT INTO documents (id, sessionId, ownerId, ownerName, notaryId, notaryName, name, size, type, uploadedAt, notarized, notarizedAt, notaryReview, notaryReviewedAt)
+    VALUES (:id, :sessionId, :ownerId, :ownerName, :notaryId, :notaryName, :name, :size, :type, :uploadedAt, :notarized, :notarizedAt, :notaryReview, :notaryReviewedAt)
+    ON CONFLICT(id) DO UPDATE SET
+      sessionId = excluded.sessionId,
+      ownerId = excluded.ownerId,
+      ownerName = excluded.ownerName,
+      notaryId = excluded.notaryId,
+      notaryName = excluded.notaryName,
+      name = excluded.name,
+      size = excluded.size,
+      type = excluded.type,
+      uploadedAt = excluded.uploadedAt,
+      notarized = excluded.notarized,
+      notarizedAt = excluded.notarizedAt,
+      notaryReview = excluded.notaryReview,
+      notaryReviewedAt = excluded.notaryReviewedAt
+  `);
+
+  selectDocuments = db.prepare(`
+    SELECT * FROM documents
+    WHERE (:sessionId IS NULL OR sessionId = :sessionId)
+      AND (:ownerId IS NULL OR ownerId = :ownerId)
+    ORDER BY uploadedAt DESC
+  `);
+
+  selectNotarizedDocuments = db.prepare(`
+    SELECT * FROM documents
+    WHERE notarized = 1
+      AND (:sessionId IS NULL OR sessionId = :sessionId)
+      AND (:ownerId IS NULL OR ownerId = :ownerId)
+    ORDER BY uploadedAt DESC
+  `);
+
+  updateDocumentReview = db.prepare(`
+    UPDATE documents
+    SET notaryReview = :notaryReview,
+        notaryReviewedAt = :notaryReviewedAt,
+        notaryName = :notaryName
+    WHERE id = :id
+  `);
+
+  selectDocumentById = db.prepare(`SELECT * FROM documents WHERE id = :id`);
+
+  selectUserByUsername = db.prepare('SELECT * FROM users WHERE username = :username');
+  selectUserByEmail = db.prepare('SELECT * FROM users WHERE email = :email');
+  selectUserById = db.prepare('SELECT * FROM users WHERE userId = :userId');
+  insertUser = db.prepare(
+    'INSERT INTO users (userId, username, email, passwordHash, role, createdAt) VALUES (:userId, :username, :email, :passwordHash, :role, :createdAt)'
+  );
+  selectAllUsers = db.prepare('SELECT userId, username, email, role, createdAt FROM users ORDER BY createdAt DESC');
+}
+
+function upsertSessionParticipant({ sessionId, socketId, userId, username, role }) {
+  if (!sessionId) return null;
+
+  const existing = dbGet('SELECT * FROM sessions WHERE sessionId = :sessionId', { sessionId });
+
+  const participant = { socketId, userId, username, role, joinedAt: now() };
+  let participants = [];
+  let notaryIds = [];
+
+  if (existing) {
+    participants = JSON.parse(existing.participants || '[]');
+    notaryIds = JSON.parse(existing.notaryIds || '[]');
+  }
+
+  // Replace or add participant
+  participants = participants.filter((p) => p.socketId !== socketId);
+  participants.push(participant);
+
+  if (role === 'notary' && userId) {
+    notaryIds = Array.from(new Set([...notaryIds, userId]));
+  }
+
+  const ownerId = role === 'owner' ? userId : existing?.ownerId;
+  const ownerUsername = role === 'owner' ? username : existing?.ownerUsername;
+
+  const data = {
+    sessionId,
+    ownerId,
+    ownerUsername,
+    notaryIds: JSON.stringify(notaryIds),
+    participants: JSON.stringify(participants),
+    active: 1,
+    createdAt: existing ? existing.createdAt : now(),
+    updatedAt: now(),
+  };
+
+  dbRun(
+    `INSERT INTO sessions (sessionId, ownerId, ownerUsername, notaryIds, participants, active, createdAt, updatedAt)
+     VALUES (:sessionId, :ownerId, :ownerUsername, :notaryIds, :participants, :active, :createdAt, :updatedAt)
+     ON CONFLICT(sessionId) DO UPDATE SET
+       ownerId = excluded.ownerId,
+       ownerUsername = excluded.ownerUsername,
+       notaryIds = excluded.notaryIds,
+       participants = excluded.participants,
+       active = excluded.active,
+       updatedAt = excluded.updatedAt`,
+    data
+  );
+
+  persistDatabase();
+  return data;
+}
+
+function removeSessionParticipant(sessionId, socketId) {
+  if (!sessionId) return null;
+  const existing = dbGet('SELECT * FROM sessions WHERE sessionId = :sessionId', { sessionId });
+  if (!existing) return null;
+
+  const participants = JSON.parse(existing.participants || '[]').filter((p) => p.socketId !== socketId);
+  const notaryIds = Array.from(
+    new Set(participants.filter((p) => p.role === 'notary').map((p) => p.userId))
+  );
+
+  const owner = participants.find((p) => p.role === 'owner');
+  const active = participants.length > 0 ? 1 : 0;
+
+  dbRun(
+    `UPDATE sessions SET participants = :participants, notaryIds = :notaryIds, ownerId = :ownerId, ownerUsername = :ownerUsername, active = :active, updatedAt = :updatedAt WHERE sessionId = :sessionId`,
+    {
+      participants: JSON.stringify(participants),
+      notaryIds: JSON.stringify(notaryIds),
+      ownerId: owner?.userId || null,
+      ownerUsername: owner?.username || null,
+      active,
+      updatedAt: now(),
+      sessionId,
+    }
+  );
+
+  persistDatabase();
+  return { sessionId, participants, notaryIds, ownerId: owner?.userId, ownerUsername: owner?.username, active };
+}
+
 
 // Store active sessions and users
 const sessions = new Map();
@@ -126,33 +388,8 @@ const normalizeRoomId = (value) => {
 const normalizeRole = (value) => String(value || '').trim().toLowerCase();
 
 const AUTH_SECRET = process.env.AUTH_SECRET || 'notary-dev-auth-secret';
-const USERS_DB_PATH = path.join(__dirname, 'data', 'users.json');
 
-const ensureUsersDbFile = async () => {
-  const dir = path.dirname(USERS_DB_PATH);
-  await fs.mkdir(dir, { recursive: true });
-  try {
-    await fs.access(USERS_DB_PATH);
-  } catch {
-    await fs.writeFile(USERS_DB_PATH, '[]', 'utf8');
-  }
-};
-
-const readUsers = async () => {
-  await ensureUsersDbFile();
-  const raw = await fs.readFile(USERS_DB_PATH, 'utf8');
-  try {
-    const parsed = JSON.parse(raw || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-
-const writeUsers = async (users) => {
-  await ensureUsersDbFile();
-  await fs.writeFile(USERS_DB_PATH, JSON.stringify(users, null, 2), 'utf8');
-};
+// User-related queries are executed via helper functions (dbGet/dbAll) to keep sql.js usage consistent.
 
 const hashPassword = (password, salt = crypto.randomBytes(16).toString('hex')) => {
   const hash = crypto.scryptSync(password, salt, 64).toString('hex');
@@ -183,6 +420,107 @@ const createToken = (user) => {
     .digest('base64url');
   return `${encodedPayload}.${signature}`;
 };
+
+// Auth API Endpoints
+app.post('/api/auth/register', (req, res) => {
+  try {
+    const username = String(req.body.username || '').trim();
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+    const role = normalizeRole(req.body.role);
+
+    if (!username || !email || !password || !role) {
+      return res.status(400).json({ error: 'All fields are required.' });
+    }
+
+    if (!['owner', 'notary'].includes(role)) {
+      return res.status(400).json({ error: 'Role must be owner or notary.' });
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Invalid email format.' });
+    }
+
+    const existingUsername = dbGet('SELECT * FROM users WHERE username = :username', { username });
+    console.log('existingUsername lookup:', existingUsername);
+    if (existingUsername) {
+      return res.status(409).json({ error: 'Username is already taken.' });
+    }
+
+    const existingEmail = dbGet('SELECT * FROM users WHERE email = :email', { email });
+    console.log('existingEmail lookup:', existingEmail);
+    if (existingEmail) {
+      return res.status(409).json({ error: 'Email is already registered.' });
+    }
+
+    const passwordHash = hashPassword(password);
+    const userId = crypto.randomUUID();
+    const createdAt = now();
+
+    console.log('Registering user:', { username, email, role });
+
+    dbRun(
+      'INSERT INTO users (userId, username, email, passwordHash, role, createdAt) VALUES (:userId, :username, :email, :passwordHash, :role, :createdAt)',
+      { userId, username, email, passwordHash, role, createdAt }
+    );
+    persistDatabase();
+
+    const token = createToken({ username, userId, role });
+    return res.json({ userId, username, email, role, token });
+  } catch (error) {
+    console.error('Error registering user:', error);
+    res.status(500).json({ error: 'Failed to register user' });
+  }
+});
+
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const username = String(req.body.username || '').trim();
+    const password = String(req.body.password || '');
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required.' });
+    }
+
+    const user = dbGet('SELECT * FROM users WHERE username = :username', { username });
+    console.log('Login attempt:', { username, userFound: Boolean(user) });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid username or password.' });
+    }
+
+    const passwordMatches = verifyPassword(password, user.passwordHash);
+    console.log('Password matches:', passwordMatches);
+    if (!passwordMatches) {
+      return res.status(401).json({ error: 'Invalid username or password.' });
+    }
+
+    const token = createToken({ username: user.username, userId: user.userId, role: user.role });
+    return res.json({ userId: user.userId, username: user.username, role: user.role, token });
+  } catch (error) {
+    console.error('Error logging in user:', error);
+    res.status(500).json({ error: 'Failed to login user' });
+  }
+});
+
+app.get('/api/users', (req, res) => {
+  try {
+    const users = dbAll('SELECT userId, username, email, role, createdAt FROM users ORDER BY createdAt DESC');
+    res.json(users);
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'Notarization Platform - Backend Server',
+    status: 'Running',
+    environment: NODE_ENV,
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Health check endpoint
 app.get('/', (req, res) => {
@@ -217,131 +555,22 @@ app.get('/api/sessions', (req, res) => {
 const escapeRegExp = (string) => String(string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Auth API Endpoints
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const username = String(req.body.username || '').trim();
-    const email = String(req.body.email || '').trim().toLowerCase();
-    const password = String(req.body.password || '');
-    const newPassword = String(req.body.newPassword || '');
-    const role = normalizeRole(req.body.role);
 
-    if (!username || !email || !password || !newPassword || !role) {
-      return res.status(400).json({ error: 'All fields are required.' });
-    }
-
-    if (!['owner', 'notary'].includes(role)) {
-      return res.status(400).json({ error: 'Role must be owner or notary.' });
-    }
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).json({ error: 'Invalid email format.' });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
-    }
-
-    if (password !== newPassword) {
-      return res.status(400).json({ error: 'Password and New Password must match.' });
-    }
-
-    // Check against stored users in MongoDB
-    const existingUser = await User.findOne({
-      $or: [
-        { username: { $regex: new RegExp(`^${escapeRegExp(username)}$`, 'i') } },
-        { email },
-      ],
-    });
-
-    if (existingUser) {
-      if (existingUser.username.toLowerCase() === username.toLowerCase()) {
-        return res.status(409).json({ error: 'Username is already registered.' });
-      }
-      return res.status(409).json({ error: 'Email is already registered.' });
-    }
-
-    const userId = crypto.randomUUID();
-
-    const newUser = await User.create({
-      userId,
-      username,
-      email,
-      passwordHash: hashPassword(password),
-      role,
-    });
-
-    return res.status(201).json({
-      message: 'Registration successful.',
-      user: {
-        userId: newUser.userId,
-        username: newUser.username,
-        email: newUser.email,
-        role: newUser.role,
-      },
-    });
-  } catch (error) {
-    console.error('Registration error:', error);
-    return res.status(500).json({ error: 'Failed to register user.' });
-  }
-});
-
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const username = String(req.body.username || '').trim();
-    const password = String(req.body.password || '');
-
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required.' });
-    }
-
-    const user = await User.findOne({
-      username: { $regex: new RegExp(`^${escapeRegExp(username)}$`, 'i') },
-    });
-
-    if (!user || !verifyPassword(password, user.passwordHash)) {
-      return res.status(401).json({ error: 'Invalid username or password.' });
-    }
-
-    return res.json({
-      token: createToken(user),
-      user: {
-        userId: user.userId,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-      },
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    return res.status(500).json({ error: 'Failed to authenticate user.' });
-  }
-});
-
-// Get all users (for admin dashboard)
-app.get('/api/users', async (req, res) => {
-  try {
-    const users = await User.find().sort({ createdAt: -1 }).lean();
-    const usersList = users.map((user) => ({
-      userId: user.userId,
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      createdAt: user.createdAt,
-    }));
-    res.json(usersList);
-  } catch (error) {
-    console.error('Error fetching users:', error);
-    res.status(500).json({ error: 'Failed to fetch users' });
-  }
-});
-
-// Signature API Endpoints
-
-// Get all signatures for a user role
-app.get('/api/signatures/:userRole', async (req, res) => {
+// Get all signatures for a user role (optionally scoped to a session or user)
+app.get('/api/signatures/:userRole', (req, res) => {
   try {
     const { userRole } = req.params;
-    const signatures = await Signature.find({ userRole }).sort({ createdAt: -1 });
+    const { sessionId, userId } = req.query;
+
+    const signatures = dbAll(
+      `SELECT * FROM signatures
+       WHERE userRole = :userRole
+         AND (:sessionId IS NULL OR sessionId = :sessionId)
+         AND (:userId IS NULL OR userId = :userId)
+       ORDER BY createdAt DESC`,
+      { userRole, sessionId: sessionId || null, userId: userId || null }
+    );
+
     res.json(signatures);
   } catch (error) {
     console.error('Error fetching signatures:', error);
@@ -350,28 +579,46 @@ app.get('/api/signatures/:userRole', async (req, res) => {
 });
 
 // Save a new signature
-app.post('/api/signatures', async (req, res) => {
+app.post('/api/signatures', (req, res) => {
   try {
-    const { id, name, image, userRole } = req.body;
+    const { id, sessionId, userId, username, name, image, userRole } = req.body;
 
-    console.log('🔐 POST /api/signatures received:', { id, name, userRole, imageLength: image?.length });
+    console.log('🔐 POST /api/signatures received:', {
+      id,
+      sessionId,
+      userId,
+      username,
+      name,
+      userRole,
+      imageLength: image?.length,
+    });
 
-    if (!id || !image || !userRole) {
-      console.warn('❌ Missing required fields:', { hasId: !!id, hasImage: !!image, hasUserRole: !!userRole });
-      return res.status(400).json({ error: 'Missing required fields: id, image, userRole' });
+    if (!id || !sessionId || !image || !userRole) {
+      console.warn('❌ Missing required fields:', {
+        hasId: !!id,
+        hasSessionId: !!sessionId,
+        hasImage: !!image,
+        hasUserRole: !!userRole,
+      });
+      return res.status(400).json({ error: 'Missing required fields: id, sessionId, image, userRole' });
     }
 
-    const signature = new Signature({
+    const nowMs = now();
+    insertOrUpdateSignature.run({
       id,
+      sessionId,
+      userId: userId || null,
+      username: username || null,
       name: name || 'Unnamed Signature',
       image,
       userRole,
+      createdAt: nowMs,
+      updatedAt: nowMs,
     });
+    persistDatabase();
 
-    console.log('💾 Saving signature to MongoDB...');
-    await signature.save();
-    console.log('✅ Signature saved successfully:', id);
-    res.json(signature);
+    const saved = dbGet('SELECT * FROM signatures WHERE id = :id', { id });
+    res.json(saved);
   } catch (error) {
     console.error('❌ Error saving signature:', error);
     res.status(500).json({ error: 'Failed to save signature', details: error.message });
@@ -379,12 +626,14 @@ app.post('/api/signatures', async (req, res) => {
 });
 
 // Delete a signature
-app.delete('/api/signatures/:id', async (req, res) => {
+app.delete('/api/signatures/:id', (req, res) => {
   try {
     const { id } = req.params;
-    const result = await Signature.findOneAndDelete({ id });
+    const result = deleteSignatureById.run({ id });
+    persistDatabase();
 
-    if (!result) {
+    // sql.js doesn't always expose `changes` in the same way; check for errors instead
+    if (!result || typeof result.changes === 'undefined' || result.changes === 0) {
       return res.status(404).json({ error: 'Signature not found' });
     }
 
@@ -396,55 +645,71 @@ app.delete('/api/signatures/:id', async (req, res) => {
 });
 
 // Document API Endpoints
-
-// Save a new notarized document
-app.post('/api/documents', async (req, res) => {
+// Save a new notarized document (tied to a session)
+app.post('/api/documents', (req, res) => {
   try {
-    const { id, name, ownerName, size, type, uploadedAt, notarized } = req.body;
+    const {
+      id,
+      sessionId,
+      ownerId,
+      ownerName,
+      notaryId,
+      notaryName,
+      name,
+      size,
+      type,
+      uploadedAt,
+      notarized,
+    } = req.body;
+
     const safeOwnerName = String(ownerName || '').trim() || 'Owner';
 
-    if (!id || !name) {
-      return res.status(400).json({ error: 'Missing required fields: id, name' });
+    if (!id || !sessionId || !name) {
+      return res.status(400).json({ error: 'Missing required fields: id, sessionId, name' });
     }
 
-    const document = await Document.findOneAndUpdate(
-      { id },
-      {
-        $set: {
-          name,
-          ownerName: safeOwnerName,
-          size: size || 0,
-          type: type || 'application/octet-stream',
-          uploadedAt: uploadedAt ? new Date(uploadedAt) : new Date(),
-          notarized: Boolean(notarized),
-          notarizedAt: notarized ? new Date() : null,
-        },
-      },
-      {
-        new: true,
-        upsert: true,
-        setDefaultsOnInsert: true,
-      }
-    );
+    const nowMs = now();
+    const uploadedMs = uploadedAt ? new Date(uploadedAt).getTime() : nowMs;
 
-    console.log(`📄 Document saved: ${name} by ${safeOwnerName}`);
+    insertOrUpdateDocument.run({
+      id,
+      sessionId,
+      ownerId: ownerId || null,
+      ownerName: safeOwnerName,
+      notaryId: notaryId || null,
+      notaryName: notaryName || null,
+      name,
+      size: Number(size) || 0,
+      type: type || 'application/octet-stream',
+      uploadedAt: uploadedMs,
+      notarized: notarized ? 1 : 0,
+      notarizedAt: notarized ? nowMs : null,
+      notaryReview: notarized ? 'pending' : null,
+      notaryReviewedAt: null,
+    });
+    persistDatabase();
 
-    // Broadcast to all connected notary clients if notarized
+    const document = dbGet('SELECT * FROM documents WHERE id = :id', { id });
+
+    console.log(`📄 Document saved: ${name} in session ${sessionId} by ${safeOwnerName}`);
+
     if (notarized) {
       io.emit('documentNotarized', {
         id: document.id,
-        name: document.name,
+        sessionId: document.sessionId,
+        ownerId: document.ownerId,
         ownerName: document.ownerName,
+        name: document.name,
         size: document.size,
         type: document.type,
         uploadedAt: document.uploadedAt,
-        notarized: document.notarized,
+        notarized: Boolean(document.notarized),
         notaryReview: document.notaryReview || 'pending',
         notaryReviewedAt: document.notaryReviewedAt,
+        notaryName: document.notaryName,
       });
-      console.log(`📡 Broadcasted documentNotarized event to all clients`);
+      console.log(`📡 Broadcasted documentNotarized to all clients: ${document.id} in session ${document.sessionId}`);
     } else {
-      // Broadcast cancellation if notarized is false
       io.emit('documentNotarizationCancelled', {
         documentId: document.id,
       });
@@ -458,10 +723,40 @@ app.post('/api/documents', async (req, res) => {
   }
 });
 
-// Get all notarized documents
-app.get('/api/documents/notarized', async (req, res) => {
+// Get documents (optionally scoped to a session or owner)
+app.get('/api/documents', (req, res) => {
   try {
-    const documents = await Document.find({ notarized: true }).sort({ uploadedAt: -1 });
+    const { sessionId, ownerId } = req.query;
+
+    const documents = dbAll(
+      `SELECT * FROM documents
+       WHERE (:sessionId IS NULL OR sessionId = :sessionId)
+         AND (:ownerId IS NULL OR ownerId = :ownerId)
+       ORDER BY uploadedAt DESC`,
+      { sessionId: sessionId || null, ownerId: ownerId || null }
+    );
+
+    res.json(documents);
+  } catch (error) {
+    console.error('Error fetching documents:', error);
+    res.status(500).json({ error: 'Failed to fetch documents' });
+  }
+});
+
+// Get all notarized documents (optionally scoped to a session or owner)
+app.get('/api/documents/notarized', (req, res) => {
+  try {
+    const { sessionId, ownerId } = req.query;
+
+    const documents = dbAll(
+      `SELECT * FROM documents
+       WHERE notarized = 1
+         AND (:sessionId IS NULL OR sessionId = :sessionId)
+         AND (:ownerId IS NULL OR ownerId = :ownerId)
+       ORDER BY uploadedAt DESC`,
+      { sessionId: sessionId || null, ownerId: ownerId || null }
+    );
+
     res.json(documents);
   } catch (error) {
     console.error('Error fetching notarized documents:', error);
@@ -470,7 +765,7 @@ app.get('/api/documents/notarized', async (req, res) => {
 });
 
 // Update notary review decision for a document
-app.put('/api/documents/:id/review', async (req, res) => {
+app.put('/api/documents/:id/review', (req, res) => {
   try {
     const { id } = req.params;
     const { notaryReview, notaryName } = req.body;
@@ -479,25 +774,27 @@ app.put('/api/documents/:id/review', async (req, res) => {
       return res.status(400).json({ error: 'Invalid review status' });
     }
 
-    const document = await Document.findOneAndUpdate(
-      { id },
-      {
-        notaryReview,
-        notaryReviewedAt: new Date(),
-        notaryName: notaryName || 'Unknown Notary',
-      },
-      { new: true }
-    );
+    const nowMs = now();
+    updateDocumentReview.run({
+      id,
+      notaryReview,
+      notaryName: notaryName || 'Unknown Notary',
+      notaryReviewedAt: nowMs,
+    });
+    persistDatabase();
 
+    const document = dbGet('SELECT * FROM documents WHERE id = :id', { id });
     if (!document) {
       return res.status(404).json({ error: 'Document not found' });
     }
 
     console.log(`✅ Document ${id} reviewed as ${notaryReview} by ${notaryName}`);
 
-    // Broadcast review update to all connected clients
     io.emit('documentReviewUpdated', {
+      id: id,
       documentId: id,
+      sessionId: document.sessionId,
+      ownerId: document.ownerId,
       notaryReview,
       notaryName,
       notaryReviewedAt: document.notaryReviewedAt,
@@ -529,6 +826,17 @@ io.on('connection', (socket) => {
     
     socket.join(roomId);
     userSessions.set(socket.id, { roomId, role, userId, username });
+
+    // Persist session in MongoDB
+    void upsertSessionParticipant({
+      sessionId: roomId,
+      socketId: socket.id,
+      userId,
+      username,
+      role,
+    }).catch((err) => {
+      console.warn(`⚠️ Failed to persist session participant for ${roomId}:`, err.message || err);
+    });
 
     // Create session if doesn't exist
     if (!sessions.has(roomId)) {
@@ -579,16 +887,33 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle notary starting a session — broadcast to all connected clients
+  // Handle notary starting a session — broadcast to all connected clients (especially owner)
   socket.on('notarySessionStarted', (data) => {
     console.log('🔔 Notary started session:', data);
-    io.emit('notarySessionStarted', data);
+    // Broadcast with complete context so owner knows to show "Join Session" button
+    io.emit('notarySessionStarted', {
+      documentId: data.documentId,
+      sessionId: data.sessionId,
+      notaryName: data.notaryName || 'Unknown Notary',
+      notaryUserId: data.notaryUserId,
+      timestamp: new Date().toISOString(),
+    });
   });
 
   // Handle notary ending a session — broadcast to all connected clients
   socket.on('notarySessionEnded', (data) => {
     console.log('🔔 Notary ended session:', data);
     io.emit('notarySessionEnded', data);
+  });
+
+  // Handle owner acknowledging session start
+  socket.on('ownerAckSessionStart', (data) => {
+    console.log('✅ Owner acknowledged session start:', data);
+    io.emit('ownerReadyForSession', {
+      documentId: data.documentId,
+      sessionId: data.sessionId,
+      timestamp: data.timestamp,
+    });
   });
 
   // Handle element added (signature/stamp placement)
@@ -623,7 +948,7 @@ io.on('connection', (socket) => {
       const session = sessions.get(userSession.roomId);
       if (session) {
         session.users = session.users.filter((u) => u.socketId !== socket.id);
-        
+
         if (session.users.length === 0) {
           sessions.delete(userSession.roomId);
           console.log(`🔓 Session closed: ${userSession.roomId}`);
@@ -631,29 +956,78 @@ io.on('connection', (socket) => {
           io.to(userSession.roomId).emit('usersConnected', session.users);
         }
       }
+
+      try {
+        removeSessionParticipant(userSession.roomId, socket.id);
+      } catch (err) {
+        console.warn(`⚠️ Failed to update session on disconnect for ${userSession.roomId}:`, err.message || err);
+      }
+
       userSessions.delete(socket.id);
     }
     console.log(`❌ User disconnected: ${socket.id}`);
   });
 });
 
-// Start server
-server.listen(PORT, () => {
-  console.log(`
+async function findAvailablePort(start) {
+  let port = start;
+  const maxAttempts = 5;
+  for (let i = 0; i < maxAttempts; i += 1) {
+    const inUse = await new Promise((resolve) => {
+      const tester = net.createServer()
+        .once('error', () => resolve(true))
+        .once('listening', () => {
+          tester.close(() => resolve(false));
+        })
+        .listen(port);
+    });
+
+    if (!inUse) return port;
+    port += 1;
+  }
+  return start;
+}
+
+async function startServer() {
+  try {
+    await initDatabase();
+
+    const availablePort = await findAvailablePort(PORT);
+    if (availablePort !== PORT) {
+      console.warn(`Port ${PORT} is in use; switching to ${availablePort}.`);
+    }
+
+    server.listen(availablePort, () => {
+      console.log(`
 ╔════════════════════════════════════════════════════╗
 ║  🔏 Notarization Platform - Server                 ║
-║  Server running on: http://localhost:${PORT}        ║
+║  Server running on: http://localhost:${availablePort}        ║
 ║  Environment: ${NODE_ENV}                           ║
 ║  Frontend: ${FRONTEND_URL}                      ║
 ╚════════════════════════════════════════════════════╝
-  `);
-});
+      `);
+    });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, closing server...');
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
-});
+    server.on('error', (err) => {
+      console.error('Server error:', err);
+      if (err.code === 'EADDRINUSE') {
+        console.error(`Port ${availablePort} is already in use. Stop the running server or set PORT to a different value.`);
+      }
+      process.exit(1);
+    });
+
+    // Graceful shutdown
+    process.on('SIGTERM', () => {
+      console.log('SIGTERM received, closing server...');
+      server.close(() => {
+        console.log('Server closed');
+        process.exit(0);
+      });
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();

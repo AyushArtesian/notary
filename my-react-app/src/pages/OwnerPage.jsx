@@ -78,6 +78,14 @@ const OwnerPage = () => {
   const [notaryConnected, setNotaryConnected] = useState(false);
   const [sessionStatus, setSessionStatus] = useState(null);
 
+  const authUser = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('notary.authUser') || 'null') || {};
+    } catch {
+      return {};
+    }
+  })();
+
   // Track backend connection status
   useEffect(() => {
     const onConnect = () => setIsConnected(true);
@@ -113,6 +121,7 @@ const OwnerPage = () => {
       }
     })();
 
+    console.log('📡 [OWNER] Joining session:', {roomId, role: 'owner', userId: authUser.userId});
     socket.emit("joinSession", {
       roomId,
       role: "owner",
@@ -122,21 +131,24 @@ const OwnerPage = () => {
 
     // Listen for element updates from notary
     socket.on("elementAdded", (element) => {
-      console.log("Notary added element:", element);
+      console.log("✏️ [OWNER] Notary added element:", element);
       setElements((prev) => [...prev, element]);
     });
 
     socket.on("elementUpdated", (updatedElement) => {
+      console.log("🔄 [OWNER] Notary updated element:", updatedElement.id);
       setElements((prev) =>
         prev.map((el) => (el.id === updatedElement.id ? updatedElement : el))
       );
     });
 
     socket.on("elementRemoved", (elementId) => {
+      console.log("🗑️ [OWNER] Notary removed element:", elementId);
       setElements((prev) => prev.filter((el) => el.id !== elementId));
     });
 
     socket.on("usersConnected", (users) => {
+      console.log("👥 [OWNER] Users connected:", users);
       setConnectedUsers(users);
       // Check if notary is in the connected users
       const notary = users.find(u => u.role === 'notary');
@@ -144,12 +156,13 @@ const OwnerPage = () => {
     });
 
     socket.on("sessionStatus", (status) => {
-      console.log("Session status:", status);
+      console.log("📊 [OWNER] Session status:", status);
       setSessionStatus(status);
       setNotaryConnected(status.notaryConnected);
     });
 
     socket.on("documentShared", (data) => {
+      console.log("📄 [OWNER] Document shared by notary:", data.fileName);
       setUploadedFile(data.pdfDataUrl);
       setUploadedFileName(data.fileName || "document.pdf");
     });
@@ -356,7 +369,13 @@ const OwnerPage = () => {
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       {/* Sidebar */}
-      <SidebarAssets userRole="owner" showAssets={true} uploadedAsset={uploadedAsset} />
+      <SidebarAssets
+        userRole="owner"
+        sessionId={sessionId}
+        userId={authUser.userId}
+        showAssets={true}
+        uploadedAsset={uploadedAsset}
+      />
 
       {/* Main Content */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "15px", overflowY: "auto" }}>

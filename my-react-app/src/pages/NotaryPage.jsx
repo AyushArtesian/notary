@@ -85,10 +85,14 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
   const [inputSessionId, setInputSessionId] = useState(initialSessionId);
   const [sessionJoined, setSessionJoined] = useState(!!initialSessionId);
 
-  // If session ID came from URL, treat it as already set
+  // If session ID came from URL, set it immediately and mark as joined
   useEffect(() => {
     if (initialSessionId && !sessionId) {
       setSessionId(initialSessionId);
+      setSessionJoined(true);
+      if (initialSessionId) {
+        localStorage.setItem("notary.lastSessionId", initialSessionId);
+      }
     }
   }, []);
 
@@ -125,6 +129,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         }
       })();
 
+      console.log('📡 [NOTARY] Joining session:', {roomId: sessionId, role: 'notary', userId: authUser.userId});
       socket.emit("joinSession", {
         roomId: sessionId,
         role: "notary",
@@ -132,23 +137,62 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         username: authUser.username || "Notary",
       });
 
+      // Check if this is a fresh session start (sessionStarted=true in URL)
+      const params = new URLSearchParams(window.location.search);
+      const wasJustStarted = params.get('sessionStarted') === 'true';
+      const documentId = params.get('documentId') || sessionId;
+      
+      if (wasJustStarted) {
+        console.log('🔔 [NOTARY] Fresh session start detected - will emit notarySessionStarted');
+        
+        // Emit immediately if socket is connected, otherwise wait with retry
+        const attemptEmit = (attempt = 0) => {
+          if (socket.connected) {
+            console.log('🔔 [NOTARY] Socket connected - Emitting notarySessionStarted');
+            socket.emit('notarySessionStarted', {
+              documentId: documentId,
+              sessionId: sessionId,
+              notaryName: authUser.username || 'Notary',
+              notaryUserId: authUser.userId,
+              timestamp: new Date().toISOString(),
+            });
+            
+            // Remove the flag from URL so we don't re-emit on refresh
+            params.delete('sessionStarted');
+            params.delete('documentId');
+            window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+          } else if (attempt < 5) {
+            // Retry up to 5 times (500ms total wait)
+            console.log(`⏳ [NOTARY] Socket not ready yet, retrying... (attempt ${attempt + 1}/5)`);
+            setTimeout(() => attemptEmit(attempt + 1), 100);
+          } else {
+            console.warn('❌ [NOTARY] Failed to emit notarySessionStarted - socket not connected after retries');
+          }
+        };
+        
+        attemptEmit();
+      }
+
       // Listen for element updates from owner
       socket.on("elementAdded", (element) => {
-        console.log("Owner added element:", element);
+        console.log("✏️ [NOTARY] Owner added element:", element);
         setElements((prev) => [...prev, element]);
       });
 
       socket.on("elementUpdated", (updatedElement) => {
+        console.log("🔄 [NOTARY] Owner updated element:", updatedElement.id);
         setElements((prev) =>
           prev.map((el) => (el.id === updatedElement.id ? updatedElement : el))
         );
       });
 
       socket.on("elementRemoved", (elementId) => {
+        console.log("🗑️ [NOTARY] Owner removed element:", elementId);
         setElements((prev) => prev.filter((el) => el.id !== elementId));
       });
 
       socket.on("usersConnected", (users) => {
+        console.log("👥 [NOTARY] Users connected:", users);
         setConnectedUsers(users);
         // Check if owner is in the connected users
         const owner = users.find(u => u.role === 'owner');
@@ -156,22 +200,24 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       });
 
       socket.on("sessionStatus", (status) => {
-        console.log("Session status:", status);
+        console.log("📊 [NOTARY] Session status:", status);
         setSessionStatus(status);
         setOwnerConnected(status.ownerConnected);
       });
 
       socket.on("documentUploaded", (docInfo) => {
+        console.log("📄 [NOTARY] Document uploaded:", docInfo);
         setDocumentInfo(docInfo);
       });
 
       socket.on("documentShared", (data) => {
+        console.log("📄 [NOTARY] Document shared by owner:", data.fileName);
         setPdfDataUrl(data.pdfDataUrl);
         setDocumentInfo({ fileName: data.fileName });
       });
 
       socket.on("ownerLeftSession", (data) => {
-        console.log("Owner left session:", data.sessionId);
+        console.log("👤 [NOTARY] Owner left session:", data.sessionId);
         if (data.sessionId === sessionId) {
           // Owner left this session, clean up and redirect
           setSessionJoined(false);
@@ -424,6 +470,14 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       {/* Sidebar */}
       <SidebarAssets
         userRole="notary"
+        sessionId={sessionId}
+        userId={(() => {
+          try {
+            return JSON.parse(localStorage.getItem('notary.authUser') || 'null')?.userId;
+          } catch {
+            return undefined;
+          }
+        })()}
         uploadedAsset={uploadedAsset}
         uploadedAssets={uploadedAssets}
         onAssetBoxClick={() => setIsAssetBoxMode(true)}

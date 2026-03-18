@@ -119,9 +119,14 @@ async function saveSignature(signatureData) {
   }
 }
 
-async function fetchSignatures(userRole) {
+async function fetchSignatures(userRole, { sessionId, userId } = {}) {
   try {
-    const url = `/api/signatures/${userRole}`;
+    const params = new URLSearchParams();
+    if (sessionId) params.append('sessionId', sessionId);
+    if (userId) params.append('userId', userId);
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const url = `/api/signatures/${userRole}${query}`;
     console.log('[fetchSignatures] Fetching from:', url);
 
     const response = await fetchWithFallback(url);
@@ -191,9 +196,14 @@ async function saveDocument(documentData) {
   }
 }
 
-async function fetchNotarizedDocuments() {
+async function fetchNotarizedDocuments({ sessionId, ownerId } = {}) {
   try {
-    const url = '/api/documents/notarized';
+    const params = new URLSearchParams();
+    if (sessionId) params.append('sessionId', sessionId);
+    if (ownerId) params.append('ownerId', ownerId);
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const url = `/api/documents/notarized${query}`;
     console.log('[fetchNotarizedDocuments] Fetching from:', url);
 
     const response = await fetchWithFallback(url);
