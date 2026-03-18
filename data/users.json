@@ -19,5 +19,12 @@
     "passwordHash": "d027710d6a74f70444fce1f04c720bed:99a836e59bf25111ceff8e3c5ee17a609b95997a528890d7b82dbfe6bcad210fa6e0ab2a4d61d51c1d7707572c629e3ff9d798369d2f4bc48bc2ee674a75a2e2",
     "role": "notary",
     "createdAt": "2026-03-16T05:57:25.168Z"
+  },
+  {
+    "username": "A",
+    "email": "q@gmail.com",
+    "passwordHash": "cabeba77d9ae46453d271f80ec29404a:df8d1c4c06a204ef4557438c17ab5f900a735ccee78c564c332c3e9b1bef73f4159d4fa68ac03761f17b8008e1cc4733c7879452998239d738e0f8b35a8e7224",
+    "role": "owner",
+    "createdAt": "2026-03-18T08:47:43.325Z"
   }
 ]

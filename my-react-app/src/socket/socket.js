@@ -2,18 +2,12 @@ import io from "socket.io-client";
 
 // Detect socket server URL from environment or API base
 const getSocketUrl = () => {
-  const env = import.meta.env.VITE_API_BASE_URL;
-  if (env && (env.includes('localhost') || env.includes('127.0.0.1'))) {
-    // Extract just the origin from API URL
-    try {
-      const url = new URL(env);
-      return `${url.protocol}//${url.hostname}:${url.port || (url.protocol === 'https:' ? '443' : '80')}`;
-    } catch (e) {
-      // Fall through to defaults
-    }
+  const env = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
+  if (env) {
+    return env;
   }
-  // Try common ports
-  return 'http://localhost:5001';
+  // Fallback to Railway production URL
+  return 'https://web-production-de6d0.up.railway.app';
 };
 
 const SOCKET_SERVER_URL = getSocketUrl();
