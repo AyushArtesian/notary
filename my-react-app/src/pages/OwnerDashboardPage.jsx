@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { saveOwnerDocument, fetchOwnerDocuments, deleteOwnerDocument } from "../utils/apiClient";
+import { base64ToUint8Array } from "../utils/pdfUtils";
 import socket from "../socket/socket";
 import PdfViewer from "../components/PdfViewer";
 import SidebarAssets from "../components/SidebarAssets";
@@ -101,7 +102,7 @@ const STATUS_COLORS = {
   rejected: { bg: "#fee2e2", color: "#991b1b" },
 };
 
-const ThreeDotsMenu = ({ onView, onNotarize, onCancelNotarize, onDelete, notarized }) => {
+const ThreeDotsMenu = ({ onView, onDownload, onNotarize, onCancelNotarize, onDelete, notarized }) => {
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
 
@@ -171,6 +172,16 @@ const ThreeDotsMenu = ({ onView, onNotarize, onCancelNotarize, onDelete, notariz
           >
             {notarized ? "🚫 Cancel notarize" : "✍️ Notarize"}
           </button>
+          {onDownload && (
+            <button
+              onClick={() => { setOpen(false); onDownload(); }}
+              style={menuItemStyle}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#f5f5f5")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
+            >
+              ⬇️ Download
+            </button>
+          )}
           <button
             onClick={() => { setOpen(false); onDelete(); }}
             style={{ ...menuItemStyle, color: "#b91c1c" }}
@@ -922,6 +933,21 @@ const OwnerDashboardPage = () => {
   const copySessionId = () => {
     if (!sessionId) return;
     navigator.clipboard.writeText(sessionId);
+  };
+
+  const handleDownloadNotarized = (doc) => {
+    if (!doc?.id) {
+      alert('Unable to download notarized document.');
+      return;
+    }
+
+    const downloadUrl = `/api/owner-documents/${doc.id}/notarized`;
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `${doc.name?.replace(/\.pdf$/i, '') || 'document'}-notarized.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   };
 
   const handleCancelNotarize = async (doc) => {
@@ -1808,6 +1834,7 @@ const OwnerDashboardPage = () => {
                   {/* Three dots */}
                   <ThreeDotsMenu
                     onView={() => handleView(doc)}
+                    onDownload={isNotarized ? () => handleDownloadNotarized(doc) : undefined}
                     onNotarize={() => handleNotarize(doc)}
                     onCancelNotarize={() => handleCancelNotarize(doc)}
                     onDelete={() => handleDelete(doc)}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { pdfjs } from "react-pdf";
-import { PDFDocument } from "pdf-lib";
+import { generateNotarizedPdfBytes } from "../utils/pdfUtils";
 import PdfViewer from "../components/PdfViewer";
 import SidebarAssets from "../components/SidebarAssets";
 import CanvasBoard from "../components/CanvasBoard";
@@ -284,41 +284,13 @@ const OwnerPage = () => {
       setIsDownloading(true);
       setDownloadError("");
 
-      const inputBytes =
-        typeof uploadedFile === "string"
-          ? await fetch(uploadedFile).then((response) => response.arrayBuffer())
-          : await uploadedFile.arrayBuffer();
-      const pdfDoc = await PDFDocument.load(inputBytes);
-      const [firstPage] = pdfDoc.getPages();
+      const pdfBytes = await generateNotarizedPdfBytes(uploadedFile, elements, {
+        editorWidth: EDITOR_WIDTH,
+        editorHeight: EDITOR_HEIGHT,
+      });
 
-      if (!firstPage) {
-        throw new Error("The uploaded PDF has no pages.");
-      }
-
-      const { width: pdfWidth, height: pdfHeight } = firstPage.getSize();
-
-      for (const element of elements) {
-        if (!element.image) continue;
-
-        const pngBytes = await toPngArrayBuffer(element.image);
-        const embeddedImage = await pdfDoc.embedPng(pngBytes);
-
-        const drawWidth = ((element.width || 100) / EDITOR_WIDTH) * pdfWidth;
-        const drawHeight = ((element.height || 100) / EDITOR_HEIGHT) * pdfHeight;
-        const drawX = (element.x / EDITOR_WIDTH) * pdfWidth;
-        const drawY = pdfHeight - (((element.y || 0) + (element.height || 100)) / EDITOR_HEIGHT) * pdfHeight;
-
-        firstPage.drawImage(embeddedImage, {
-          x: drawX,
-          y: drawY,
-          width: drawWidth,
-          height: drawHeight,
-        });
-      }
-
-      const outputBytes = await pdfDoc.save();
-      const outputBlob = new Blob([outputBytes], { type: "application/pdf" });
-      const outputUrl = URL.createObjectURL(outputBlob);
+      const blob = new Blob([pdfBytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
 
       const resolvedName =
         uploadedFileName ||
@@ -328,11 +300,12 @@ const OwnerPage = () => {
         : resolvedName;
 
       const link = document.createElement("a");
-      link.href = outputUrl;
+      link.href = url;
       link.download = `${sourceName}-with-signatures.pdf`;
+      document.body.appendChild(link);
       link.click();
-
-      URL.revokeObjectURL(outputUrl);
+      link.remove();
+      URL.revokeObjectURL(url);
     } catch (error) {
       console.error("Failed to generate updated PDF:", error);
       setDownloadError(error?.message || "Failed to create updated PDF.");

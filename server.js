@@ -131,6 +131,8 @@ CREATE TABLE IF NOT EXISTS owner_documents (
   size INTEGER,
   type TEXT,
   dataUrl TEXT,
+  notarizedDataUrl TEXT,
+  notarizedPath TEXT,
   uploadedAt INTEGER NOT NULL,
   inProcess INTEGER NOT NULL DEFAULT 0,
   notarized INTEGER NOT NULL DEFAULT 0,
@@ -182,22 +184,82 @@ function dbGet(sql, params = {}) {
   return hasValue ? row : null;
 }
 
-function dbAll(sql, params = {}) {
-  const stmt = db.prepare(sql);
-  stmt.bind(normalizeParams(params));
-  const rows = [];
-  while (stmt.step()) {
-    rows.push(stmt.getAsObject());
+function isDatabaseCorrupted(dbInstance) {
+  try {
+    const res = dbInstance.exec("PRAGMA integrity_check;");
+    const status = res?.[0]?.values?.[0]?.[0];
+    return status !== "ok";
+  } catch {
+    return true;
   }
-  stmt.free();
-  return rows;
+}
+
+function recoverDatabase(reason) {
+  console.warn(`⚠️ Recovering database due to: ${reason}`);
+  try {
+    if (fs.existsSync(dbPath)) {
+      const backupPath = `${dbPath}.corrupt-${Date.now()}`;
+      try {
+        fs.renameSync(dbPath, backupPath);
+        console.warn(`⚠️ Corrupted DB backed up to: ${backupPath}`);
+      } catch (renameErr) {
+        console.warn('⚠️ Failed to rename corrupted DB, attempting delete:', renameErr?.message || renameErr);
+        try {
+          fs.unlinkSync(dbPath);
+          console.warn('⚠️ Corrupted DB deleted to allow fresh creation.');
+        } catch (unlinkErr) {
+          console.warn('⚠️ Failed to delete corrupted DB file:', unlinkErr?.message || unlinkErr);
+        }
+      }
+    }
+  } catch (backupError) {
+    console.warn('⚠️ Failed to backup corrupted database file:', backupError?.message || backupError);
+  }
+
+  // Create a fresh database
+  db = new SQL.Database();
+  db.exec(initSql);
+  ensureOwnerDocumentsSchema();
+  ensureAssetsSchema();
+  dropLegacyDocumentsTable();
+  setupPreparedStatements();
+  persistDatabase();
+}
+
+function dbAll(sql, params = {}) {
+  try {
+    const stmt = db.prepare(sql);
+    stmt.bind(normalizeParams(params));
+    const rows = [];
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject());
+    }
+    stmt.free();
+    return rows;
+  } catch (error) {
+    const msg = (error && error.message) || String(error);
+    if (msg.includes('disk image is malformed') || msg.includes('database disk image is malformed')) {
+      recoverDatabase(msg);
+      return [];
+    }
+    throw error;
+  }
 }
 
 function dbRun(sql, params = {}) {
-  const stmt = db.prepare(sql);
-  stmt.bind(normalizeParams(params));
-  stmt.step();
-  stmt.free();
+  try {
+    const stmt = db.prepare(sql);
+    stmt.bind(normalizeParams(params));
+    stmt.step();
+    stmt.free();
+  } catch (error) {
+    const msg = (error && error.message) || String(error);
+    if (msg.includes('disk image is malformed') || msg.includes('database disk image is malformed')) {
+      recoverDatabase(msg);
+      return;
+    }
+    throw error;
+  }
 }
 
 async function initDatabase() {
@@ -205,11 +267,27 @@ async function initDatabase() {
     locateFile: (file) => path.join(__dirname, 'node_modules', 'sql.js', 'dist', file),
   });
 
-  if (fs.existsSync(dbPath)) {
-    const buffer = fs.readFileSync(dbPath);
-    db = new SQL.Database(new Uint8Array(buffer));
-  } else {
-    db = new SQL.Database();
+  // Ensure the notarized output directory exists.
+  const notarizedDir = path.resolve(__dirname, "data", "notarized");
+  if (!fs.existsSync(notarizedDir)) {
+    fs.mkdirSync(notarizedDir, { recursive: true });
+  }
+
+  try {
+    if (fs.existsSync(dbPath)) {
+      const buffer = fs.readFileSync(dbPath);
+      db = new SQL.Database(new Uint8Array(buffer));
+
+      if (isDatabaseCorrupted(db)) {
+        console.warn('⚠️ Detected corrupted database on startup, rebuilding.');
+        recoverDatabase('integrity check failed');
+      }
+    } else {
+      db = new SQL.Database();
+    }
+  } catch (err) {
+    console.warn('⚠️ Failed to load existing DB, rebuilding:', err?.message || err);
+    recoverDatabase(err?.message || 'load error');
   }
 
   db.exec(initSql);
@@ -231,6 +309,14 @@ function ensureOwnerDocumentsSchema() {
     if (!columns.includes('dataUrl')) {
       console.log('🔧 Adding missing owner_documents.dataUrl column');
       db.exec("ALTER TABLE owner_documents ADD COLUMN dataUrl TEXT;");
+    }
+    if (!columns.includes('notarizedDataUrl')) {
+      console.log('🔧 Adding missing owner_documents.notarizedDataUrl column');
+      db.exec("ALTER TABLE owner_documents ADD COLUMN notarizedDataUrl TEXT;");
+    }
+    if (!columns.includes('notarizedPath')) {
+      console.log('🔧 Adding missing owner_documents.notarizedPath column');
+      db.exec("ALTER TABLE owner_documents ADD COLUMN notarizedPath TEXT;");
     }
 
     // Normalize legacy rows from earlier workflow bug where accepted docs were marked notarized.
@@ -857,13 +943,14 @@ app.post('/api/documents', (req, res) => {
 
     dbRun(
       `
-      INSERT INTO owner_documents (id, ownerId, ownerName, sessionId, name, size, type, dataUrl, uploadedAt, inProcess, notarized, notarizedAt, notaryId, notaryName, notaryReview, notaryReviewedAt, status)
-      VALUES (:id, :ownerId, :ownerName, :sessionId, :name, :size, :type, :dataUrl, :uploadedAt, :inProcess, :notarized, :notarizedAt, :notaryId, :notaryName, :notaryReview, :notaryReviewedAt, :status)
+      INSERT INTO owner_documents (id, ownerId, ownerName, sessionId, name, size, type, dataUrl, notarizedDataUrl, uploadedAt, inProcess, notarized, notarizedAt, notaryId, notaryName, notaryReview, notaryReviewedAt, status)
+      VALUES (:id, :ownerId, :ownerName, :sessionId, :name, :size, :type, :dataUrl, :notarizedDataUrl, :uploadedAt, :inProcess, :notarized, :notarizedAt, :notaryId, :notaryName, :notaryReview, :notaryReviewedAt, :status)
       ON CONFLICT(id) DO UPDATE SET
         ownerId = excluded.ownerId,
         ownerName = excluded.ownerName,
         sessionId = excluded.sessionId,
         dataUrl = excluded.dataUrl,
+        notarizedDataUrl = excluded.notarizedDataUrl,
         inProcess = excluded.inProcess,
         status = excluded.status,
         notaryId = excluded.notaryId,
@@ -888,6 +975,7 @@ app.post('/api/documents', (req, res) => {
         size: Number(size) || 0,
         type: type || 'application/octet-stream',
         dataUrl: typeof dataUrl === 'string' ? dataUrl : null,
+        notarizedDataUrl: typeof req.body.notarizedDataUrl === 'string' ? req.body.notarizedDataUrl : null,
         uploadedAt: uploadedMs,
         inProcess,
         notarized: notarized ? 1 : 0,
@@ -1055,9 +1143,27 @@ app.put('/api/documents/:id/review', (req, res) => {
 app.put('/api/owner-documents/:id/notarize', (req, res) => {
   try {
     const { id } = req.params;
-    const { notaryName } = req.body;
+    const { notaryName, notarizedDataUrl } = req.body;
 
     const nowMs = now();
+
+    // If a notarized PDF is provided, save it to disk and store path in DB.
+    let notarizedPath = null;
+    if (typeof notarizedDataUrl === 'string' && notarizedDataUrl.trim()) {
+      const [, base64] = notarizedDataUrl.split(',');
+      const buffer = Buffer.from(base64 || notarizedDataUrl, 'base64');
+      const outDir = path.resolve(__dirname, 'data', 'notarized');
+      if (!fs.existsSync(outDir)) {
+        fs.mkdirSync(outDir, { recursive: true });
+      }
+      notarizedPath = path.join(outDir, `${id}.pdf`);
+      try {
+        fs.writeFileSync(notarizedPath, buffer);
+      } catch (writeErr) {
+        console.warn('⚠️ Failed to write notarized PDF file:', writeErr?.message || writeErr);
+        notarizedPath = null;
+      }
+    }
 
     dbRun(
       `
@@ -1067,7 +1173,9 @@ app.put('/api/owner-documents/:id/notarize', (req, res) => {
           notarized = 1,
           notarizedAt = :notarizedAt,
           notaryReview = 'accepted',
-          notaryName = :notaryName
+          notaryName = :notaryName,
+          notarizedDataUrl = :notarizedDataUrl,
+          notarizedPath = :notarizedPath
       WHERE id = :id
     `,
       {
@@ -1075,6 +1183,8 @@ app.put('/api/owner-documents/:id/notarize', (req, res) => {
         status: 'notarized',
         notarizedAt: nowMs,
         notaryName: notaryName || 'Unknown Notary',
+        notarizedDataUrl: notarizedDataUrl || null,
+        notarizedPath,
       }
     );
     persistDatabase();
@@ -1258,6 +1368,33 @@ app.get('/api/owner-documents/:id', (req, res) => {
   } catch (error) {
     console.error('Error fetching owner document:', error);
     res.status(500).json({ error: 'Failed to fetch owner document' });
+  }
+});
+
+app.get('/api/owner-documents/:id/notarized', (req, res) => {
+  try {
+    const { id } = req.params;
+    const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+    if (!document) {
+      return res.status(404).json({ error: 'Owner document not found' });
+    }
+
+    const filePath = document.notarizedPath;
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Notarized document not found' });
+    }
+
+    res.download(filePath, `${document.name?.replace(/\.pdf$/i, '') || id}-notarized.pdf`, (err) => {
+      if (err) {
+        console.error('Error sending notarized file:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Failed to download notarized document' });
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error downloading notarized document:', error);
+    res.status(500).json({ error: 'Failed to download notarized document' });
   }
 });
 

@@ -481,17 +481,20 @@ async function markOwnerDocumentSessionStarted(documentId, sessionId, notaryName
   }
 }
 
-async function completeOwnerDocumentNotarization(documentId, notaryName) {
+async function completeOwnerDocumentNotarization(documentId, notaryName, notarizedDataUrl) {
   try {
     const url = `/api/owner-documents/${documentId}/notarize`;
     console.log('[completeOwnerDocumentNotarization] Notarizing:', documentId);
+
+    const payload = { notaryName };
+    if (notarizedDataUrl) payload.notarizedDataUrl = notarizedDataUrl;
 
     const response = await fetchWithFallback(url, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ notaryName }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {

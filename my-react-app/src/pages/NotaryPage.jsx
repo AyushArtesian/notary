@@ -6,6 +6,7 @@ import CanvasBoard from "../components/CanvasBoard";
 import ScreenRecorder from "../components/ScreenRecorder";
 import socket from "../socket/socket";
 import { createDocumentDragAsset } from "../utils/documentAsset";
+import { bytesToDataUrl, generateNotarizedPdfBytes } from "../utils/pdfUtils";
 import { completeOwnerDocumentNotarization, endOwnerDocumentSession, fetchOwnerDocuments, markOwnerDocumentSessionStarted } from "../utils/apiClient";
 
 const EDITOR_WIDTH = 900;
@@ -383,8 +384,31 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       }
     })();
 
+    let notarizedDataUrl = null;
+    if (pdfDataUrl) {
+      try {
+        const bytes = await generateNotarizedPdfBytes(pdfDataUrl, elements, {
+          editorWidth: EDITOR_WIDTH,
+          editorHeight: EDITOR_HEIGHT,
+        });
+        notarizedDataUrl = bytesToDataUrl(bytes, "application/pdf");
+      } catch (error) {
+        console.warn('⚠️ [NOTARY] Failed to generate notarized PDF:', error);
+      }
+    }
+
+    if (!notarizedDataUrl) {
+      alert('Unable to generate notarized PDF. Please try again or refresh the page.');
+      console.warn('⚠️ Notarization aborted: no notarized PDF available', { elements, pdfDataUrl });
+      return;
+    }
+
     try {
-      await completeOwnerDocumentNotarization(targetDocumentId, authUser.username || 'Notary');
+      await completeOwnerDocumentNotarization(
+        targetDocumentId,
+        authUser.username || 'Notary',
+        notarizedDataUrl
+      );
       console.log('✅ Notarization marked complete for', targetDocumentId);
     } catch (error) {
       console.error('❌ Failed to mark document notarized:', error);
