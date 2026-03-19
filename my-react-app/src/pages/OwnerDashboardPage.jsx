@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { saveDocument, fetchNotarizedDocuments } from "../utils/apiClient";
+import { saveOwnerDocument, fetchOwnerDocuments } from "../utils/apiClient";
 import socket from "../socket/socket";
 import PdfViewer from "../components/PdfViewer";
 import SidebarAssets from "../components/SidebarAssets";
@@ -100,10 +100,12 @@ const formatDate = (iso) => {
 };
 
 const STATUS_COLORS = {
-  Pending: { bg: "#fff3cd", color: "#856404" },
-  "In Review": { bg: "#cfe2ff", color: "#0a4e9b" },
-  Completed: { bg: "#d1e7dd", color: "#0f5132" },
-  Rejected: { bg: "#f8d7da", color: "#842029" },
+  uploaded: { bg: "#eef2ff", color: "#1e3a8a" },
+  pending_review: { bg: "#fff7ed", color: "#92400e" },
+  accepted: { bg: "#d1fae5", color: "#065f46" },
+  session_started: { bg: "#cfe2ff", color: "#0a4e9b" },
+  notarized: { bg: "#d1e7dd", color: "#0f5132" },
+  rejected: { bg: "#fee2e2", color: "#991b1b" },
 };
 
 const ThreeDotsMenu = ({ onView, onNotarize, onCancelNotarize, onDelete, notarized }) => {
@@ -284,6 +286,31 @@ const OwnerDashboardPage = () => {
   const [docs, setDocs] = useState(loadDocs);
   const [notarizingDoc, setNotarizingDoc] = useState(null);
   const [sessionId, setSessionId] = useState("");
+
+  const authUser = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('notary.authUser') || 'null') || {};
+    } catch {
+      return {};
+    }
+  })();
+
+  useEffect(() => {
+    const loadFromBackend = async () => {
+      if (!authUser?.userId) return;
+      try {
+        const backendDocs = await fetchOwnerDocuments({ ownerId: authUser.userId });
+        if (Array.isArray(backendDocs) && backendDocs.length > 0) {
+          setDocs(backendDocs);
+          saveDocs(backendDocs);
+        }
+      } catch (err) {
+        console.warn('[OWNER] Failed to load documents from backend:', err?.message || err);
+      }
+    };
+
+    loadFromBackend();
+  }, []);
   const [activeSessions, setActiveSessions] = useState(loadActiveSessions);
   const [previousSessions, setPreviousSessions] = useState(loadPreviousSessions);
   // Restore activeSessionDocId to maintain session state on page refresh
@@ -298,13 +325,6 @@ const OwnerDashboardPage = () => {
   const [uploadedAssets, setUploadedAssets] = useState([]);
   const [uploadedAsset, setUploadedAsset] = useState(null);
 
-  const authUser = (() => {
-    try {
-      return JSON.parse(localStorage.getItem('notary.authUser') || 'null') || {};
-    } catch {
-      return {};
-    }
-  })();
   const lastAutoSharedDocKeyRef = useRef("");
   const currentSessionIdRef = useRef(null);
   const editorScrollRef = useRef(null);
@@ -430,10 +450,11 @@ const OwnerDashboardPage = () => {
       setDocs((prevDocs) => {
         const nextDocs = prevDocs.map((doc) =>
           doc.id === data.documentId
-            ? { 
-                ...doc, 
-                notaryReview: doc.notaryReview || "accepted",
-                notaryName: data.notaryName || doc.notaryName || "Notary",
+            ? {
+                ...doc,
+                status: 'session_started',
+                notaryReview: doc.notaryReview || 'accepted',
+                notaryName: data.notaryName || doc.notaryName || 'Notary',
               }
             : doc
         );
@@ -495,32 +516,38 @@ const OwnerDashboardPage = () => {
 
     const syncReviewStatus = async () => {
       try {
-        const backendDocs = await fetchNotarizedDocuments();
+        const backendDocs = await fetchOwnerDocuments({ ownerId: authUser.userId });
         if (cancelled || !Array.isArray(backendDocs) || backendDocs.length === 0) return;
 
-        const reviewById = new Map(backendDocs.map((d) => [d.id, d]));
+        const backendById = new Map(backendDocs.map((d) => [d.id, d]));
         setDocs((prevDocs) => {
           let changed = false;
           const nextDocs = prevDocs.map((doc) => {
-            const backendDoc = reviewById.get(doc.id);
+            const backendDoc = backendById.get(doc.id);
             if (!backendDoc) return doc;
 
+            const nextStatus = backendDoc.status || doc.status;
             const nextReview = backendDoc.notaryReview || doc.notaryReview;
             const nextName = backendDoc.notaryName || doc.notaryName;
             const nextReviewedAt = backendDoc.notaryReviewedAt || doc.notaryReviewedAt;
+            const nextSessionId = backendDoc.sessionId || doc.sessionId;
 
             if (
+              nextStatus !== doc.status ||
               nextReview !== doc.notaryReview ||
               nextName !== doc.notaryName ||
-              nextReviewedAt !== doc.notaryReviewedAt
+              nextReviewedAt !== doc.notaryReviewedAt ||
+              nextSessionId !== doc.sessionId
             ) {
               changed = true;
-              console.log(`✅ [OWNER] Polling: Updated doc ${doc.id} status to ${nextReview}`);
+              console.log(`✅ [OWNER] Polling: Updated doc ${doc.id} status to ${nextStatus}`);
               return {
                 ...doc,
+                status: nextStatus,
                 notaryReview: nextReview,
                 notaryName: nextName,
                 notaryReviewedAt: nextReviewedAt,
+                sessionId: nextSessionId,
               };
             }
 
@@ -549,18 +576,18 @@ const OwnerDashboardPage = () => {
   // Keep owner dashboard in sync with notary accept/reject decisions.
   useEffect(() => {
     const onDocumentReviewUpdated = (data) => {
-      const { documentId, notaryReview, notaryName, notaryReviewedAt } = data || {};
+      const { documentId, notaryReview, notaryName, notaryReviewedAt, status } = data || {};
       if (!documentId || !notaryReview) {
         console.warn('⚠️ [OWNER] Invalid documentReviewUpdated data:', data);
         return;
       }
 
-      console.log(`✅ [OWNER] Received documentReviewUpdated: ${documentId} → ${notaryReview}`);
+      console.log(`✅ [OWNER] Received documentReviewUpdated: ${documentId} → ${notaryReview} (status: ${status})`);
 
       setDocs((prevDocs) => {
         const nextDocs = prevDocs.map((doc) =>
           doc.id === documentId
-            ? { ...doc, notaryReview, notaryName, notaryReviewedAt }
+            ? { ...doc, status: status || doc.status, notaryReview, notaryName, notaryReviewedAt }
             : doc
         );
         saveDocs(nextDocs);
@@ -584,8 +611,25 @@ const OwnerDashboardPage = () => {
     };
 
     socket.on("documentReviewUpdated", onDocumentReviewUpdated);
+
+    const onDocumentNotarized = (data) => {
+      const { documentId, status } = data || {};
+      if (!documentId) return;
+      console.log(`✅ [OWNER] Received documentNotarized: ${documentId} (status: ${status})`);
+      setDocs((prevDocs) => {
+        const nextDocs = prevDocs.map((doc) =>
+          doc.id === documentId ? { ...doc, status: status || doc.status, notarized: true } : doc
+        );
+        saveDocs(nextDocs);
+        return nextDocs;
+      });
+    };
+
+    socket.on("documentNotarized", onDocumentNotarized);
+
     return () => {
       socket.off("documentReviewUpdated", onDocumentReviewUpdated);
+      socket.off("documentNotarized", onDocumentNotarized);
     };
   }, [activeSessionDocId]);
 
@@ -827,24 +871,24 @@ const OwnerDashboardPage = () => {
 
   const handleCancelNotarize = async (doc) => {
     const updated = docs.map((d) =>
-      d.id === doc.id ? { ...d, notarized: false } : d
+      d.id === doc.id ? { ...d, status: 'uploaded', notaryReview: null, notarized: false } : d
     );
     setDocs(updated);
     saveDocs(updated);
 
-    // Update backend to mark notarized=false
+    // Update backend to mark not in process / not notarized
     try {
       const docSessionId = activeSessions[doc.id] || previousSessions[doc.id] || sessionId || `notary-session-${Date.now()}`;
-      await saveDocument({
+      await saveOwnerDocument({
         id: doc.id,
-        sessionId: docSessionId,
         ownerId: authUser.userId,
-        name: doc.name,
         ownerName: doc.ownerName,
+        sessionId: docSessionId,
+        name: doc.name,
         size: doc.size,
         type: doc.type,
         uploadedAt: doc.uploadedAt,
-        notarized: false,
+        status: 'uploaded',
       });
 
       // Broadcast cancellation to notary dashboard via socket.io
@@ -885,7 +929,8 @@ const OwnerDashboardPage = () => {
         size: file.size,
         type: file.type,
         uploadedAt: new Date().toISOString(),
-        status: "Pending",
+        status: "uploaded",
+        notaryReview: "pending",
         notarized: false,
         dataUrl: ev.target.result,
         sessionId: currentSessionId,
@@ -896,16 +941,16 @@ const OwnerDashboardPage = () => {
 
       // Persist uploaded document to backend immediately.
       try {
-        await saveDocument({
+        await saveOwnerDocument({
           id: newDoc.id,
-          sessionId: newDoc.sessionId,
           ownerId: authUser.userId,
           ownerName: newDoc.ownerName,
+          sessionId: newDoc.sessionId,
           name: newDoc.name,
           size: newDoc.size,
           type: newDoc.type,
           uploadedAt: newDoc.uploadedAt,
-          notarized: false,
+          status: 'uploaded',
         });
         console.log('✅ [OWNER] Uploaded document saved to backend:', newDoc.name);
       } catch (error) {
@@ -945,7 +990,7 @@ const OwnerDashboardPage = () => {
     const updatedDoc = {
       ...notarizingDoc,
       ownerName,
-      notarized: true,
+      status: "pending_review",
       notaryReview: "pending",
       notaryName: "",
       notaryReviewedAt: null,
@@ -961,21 +1006,21 @@ const OwnerDashboardPage = () => {
       const docSessionId = activeSessions[updatedDoc.id] || previousSessions[updatedDoc.id] || sessionId || `notary-session-${Date.now()}`;
       // IMPORTANT: Don't set activeSessions here! Only set it when notary actually starts the session.
       // setPreviousSessions can stay for continuing past sessions, but NOT for new ones
-      console.log('📤 [OWNER] Saving notarized document with sessionId:', docSessionId);
-      const savedDoc = await saveDocument({
+      console.log('📤 [OWNER] Saving document for notary review with sessionId:', docSessionId);
+      const savedDoc = await saveOwnerDocument({
         id: updatedDoc.id,
-        sessionId: docSessionId,
         ownerId: authUser.userId,
-        name: updatedDoc.name,
         ownerName: updatedDoc.ownerName,
+        sessionId: docSessionId,
+        name: updatedDoc.name,
         size: updatedDoc.size,
         type: updatedDoc.type,
         uploadedAt: updatedDoc.uploadedAt,
-        notarized: true,
+        status: 'pending_review',
       });
 
       // Broadcast to notary dashboard via socket.io with complete context
-      console.log('📡 [OWNER] Emitting documentNotarized event');
+      console.log('📡 [OWNER] Emitting documentNotarized event (pending review)');
       socket.emit("documentNotarized", {
         id: savedDoc.id,
         sessionId: savedDoc.sessionId,
@@ -985,11 +1030,12 @@ const OwnerDashboardPage = () => {
         size: savedDoc.size,
         type: savedDoc.type,
         uploadedAt: savedDoc.uploadedAt,
-        notarized: true,
+        status: savedDoc.status,
+        notarized: savedDoc.notarized,
       });
       console.log("✅ [OWNER] Emitted documentNotarized event via socket");
     } catch (error) {
-      console.error("❌ [OWNER] Failed to sync notarized document to backend:", error);
+      console.error("❌ [OWNER] Failed to sync document to backend:", error);
     }
 
     setNotarizingDoc(null);
@@ -1512,16 +1558,44 @@ const OwnerDashboardPage = () => {
 
             {/* Rows */}
             {docs.map((doc, idx) => {
-              const statusStyle = STATUS_COLORS[doc.status] || STATUS_COLORS["Pending"];
+              const rawStatus = String(doc.status || '').trim().toLowerCase();
+              const review = String(doc.notaryReview || '').trim().toLowerCase();
+              const status =
+                rawStatus === 'notarized'
+                  ? 'notarized'
+                  : rawStatus === 'session_started'
+                  ? 'session_started'
+                  : rawStatus === 'accepted' || review === 'accepted'
+                  ? 'accepted'
+                  : rawStatus === 'rejected' || review === 'rejected'
+                  ? 'rejected'
+                  : rawStatus || (doc.notarized ? 'notarized' : 'uploaded');
+              const statusStyle = STATUS_COLORS[status] || STATUS_COLORS.uploaded;
               const hasActiveSession = activeSessions[doc.id];
               const hasPreviousSession = previousSessions[doc.id];
               const hasDocumentSession = doc.sessionId || sessionId;
-              const reviewStatus = doc.notaryReview || "pending";
-              // Join button appears ONLY when we have an active session (notary started)
-              const showButton =
-                Boolean(doc.notarized) &&
+
+              // Join button appears ONLY when session has started in the workflow
+              const showJoinButton =
+                status === 'session_started' &&
                 (hasActiveSession || hasPreviousSession) &&
                 Boolean(hasDocumentSession);
+
+              const displayStatus =
+                status === 'uploaded'
+                  ? 'Waiting for notary'
+                  : status === 'pending_review'
+                  ? 'Waiting for acceptance'
+                  : status === 'accepted'
+                  ? 'Accepted — waiting for session'
+                  : status === 'session_started'
+                  ? 'Session started'
+                  : status === 'notarized'
+                  ? 'Notarized'
+                  : status === 'rejected'
+                  ? 'Rejected'
+                  : status;
+
               return (
                 <div
                   key={doc.id}
@@ -1593,15 +1667,15 @@ const OwnerDashboardPage = () => {
                         style={{
                           display: "inline-block",
                           marginTop: "3px",
-                          background: doc.notarized ? "#d1e7dd" : statusStyle.bg,
-                          color: doc.notarized ? "#0f5132" : statusStyle.color,
+                          background: statusStyle.bg,
+                          color: statusStyle.color,
                           padding: "1px 8px",
                           borderRadius: "10px",
                           fontSize: "11px",
                           fontWeight: 600,
                         }}
                       >
-                        {doc.notarized ? "✓ Notarized" : doc.status}
+                        {status === 'notarized' ? '✓ Notarized' : displayStatus}
                       </span>
                     </div>
                   </div>
@@ -1613,7 +1687,7 @@ const OwnerDashboardPage = () => {
                   <span style={{ fontSize: "12px", color: "#999" }}>{formatDate(doc.uploadedAt)}</span>
 
                   {/* Session Button */}
-                  {showButton ? (
+                  {showJoinButton ? (
                     <button
                       onClick={() => handleJoinSession(doc)}
                       style={{
@@ -1634,15 +1708,7 @@ const OwnerDashboardPage = () => {
                     </button>
                   ) : (
                     <span style={{ fontSize: "12px", color: "#9ca3af" }}>
-                      {doc.notarized
-                        ? reviewStatus === "rejected"
-                          ? "❌ Rejected"
-                          : reviewStatus === "accepted"
-                          ? activeSessions[doc.id] || previousSessions[doc.id]
-                            ? "🟢 Ready to join"
-                            : "⏳ Ready, notary starting..."
-                          : "⏳ Waiting for acceptance"
-                        : "-"}
+                      {displayStatus}
                     </span>
                   )}
 

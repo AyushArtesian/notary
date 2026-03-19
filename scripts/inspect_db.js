@@ -17,4 +17,8 @@ const initSqlJs = require('sql.js');
   const usersRes = db.exec('SELECT COUNT(*) as c FROM users;');
   const usersCount = usersRes[0]?.values?.[0]?.[0] ?? 0;
   console.log('users count:', usersCount);
+
+  const ownerDocsRes = db.exec('SELECT COUNT(*) as c FROM owner_documents;');
+  const ownerDocsCount = ownerDocsRes[0]?.values?.[0]?.[0] ?? 0;
+  console.log('owner_documents count:', ownerDocsCount);
 })();

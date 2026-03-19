@@ -196,6 +196,84 @@ async function saveDocument(documentData) {
   }
 }
 
+async function saveOwnerDocument(documentData) {
+  try {
+    const url = '/api/owner-documents';
+    console.log('[saveOwnerDocument] Sending document:', { id: documentData.id, name: documentData.name });
+
+    const response = await fetchWithFallback(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(documentData),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    console.log('[saveOwnerDocument] ✅ Saved:', responseData.id);
+    return responseData;
+  } catch (error) {
+    console.error('[saveOwnerDocument] ❌ Error:', error);
+    throw error;
+  }
+}
+
+async function fetchDocuments({ sessionId, ownerId } = {}) {
+  try {
+    const params = new URLSearchParams();
+    if (sessionId) params.append('sessionId', sessionId);
+    if (ownerId) params.append('ownerId', ownerId);
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const url = `/api/documents${query}`;
+    console.log('[fetchDocuments] Fetching from:', url);
+
+    const response = await fetchWithFallback(url);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: Failed to fetch documents`);
+    }
+
+    const responseData = await response.json();
+    console.log('[fetchDocuments] ✅ Got', responseData.length, 'documents');
+    return responseData;
+  } catch (error) {
+    console.error('[fetchDocuments] ❌ Error:', error);
+    return [];
+  }
+}
+
+async function fetchOwnerDocuments({ ownerId, inProcess, notarized } = {}) {
+  try {
+    const params = new URLSearchParams();
+    if (ownerId) params.append('ownerId', ownerId);
+    if (inProcess !== undefined) params.append('inProcess', inProcess ? '1' : '0');
+    if (notarized !== undefined) params.append('notarized', notarized ? '1' : '0');
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const url = `/api/owner-documents${query}`;
+    console.log('[fetchOwnerDocuments] Fetching from:', url);
+
+    const response = await fetchWithFallback(url);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: Failed to fetch owner documents`);
+    }
+
+    const responseData = await response.json();
+    console.log('[fetchOwnerDocuments] ✅ Got', responseData.length, 'documents');
+    return responseData;
+  } catch (error) {
+    console.error('[fetchOwnerDocuments] ❌ Error:', error);
+    return [];
+  }
+}
+
 async function fetchNotarizedDocuments({ sessionId, ownerId } = {}) {
   try {
     const params = new URLSearchParams();
@@ -248,4 +326,58 @@ async function updateDocumentReview(documentId, notaryReview, notaryName) {
   }
 }
 
-export { saveSignature, fetchSignatures, deleteSignature, registerUser, loginUser, fetchUsers, saveDocument, fetchNotarizedDocuments, updateDocumentReview, API_BASE_URL };
+async function updateOwnerDocumentReview(documentId, notaryReview, notaryName) {
+  try {
+    const url = `/api/owner-documents/${documentId}/review`;
+    console.log('[updateOwnerDocumentReview] Updating:', documentId, 'as', notaryReview);
+
+    const response = await fetchWithFallback(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ notaryReview, notaryName }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    console.log('[updateOwnerDocumentReview] ✅ Updated');
+    return responseData;
+  } catch (error) {
+    console.error('[updateOwnerDocumentReview] ❌ Error:', error);
+    throw error;
+  }
+}
+
+async function completeOwnerDocumentNotarization(documentId, notaryName) {
+  try {
+    const url = `/api/owner-documents/${documentId}/notarize`;
+    console.log('[completeOwnerDocumentNotarization] Notarizing:', documentId);
+
+    const response = await fetchWithFallback(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ notaryName }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    console.log('[completeOwnerDocumentNotarization] ✅ Notarized');
+    return responseData;
+  } catch (error) {
+    console.error('[completeOwnerDocumentNotarization] ❌ Error:', error);
+    throw error;
+  }
+}
+
+export { saveSignature, fetchSignatures, deleteSignature, registerUser, loginUser, fetchUsers, saveDocument, saveOwnerDocument, fetchDocuments, fetchOwnerDocuments, fetchNotarizedDocuments, updateDocumentReview, updateOwnerDocumentReview, completeOwnerDocumentNotarization, API_BASE_URL };

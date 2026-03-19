@@ -10,6 +10,14 @@
 
 require('dotenv').config();
 
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason);
+});
+
 const express = require('express');
 const http = require('http');
 const net = require('net');
@@ -114,6 +122,25 @@ CREATE TABLE IF NOT EXISTS sessions (
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS owner_documents (
+  id TEXT PRIMARY KEY,
+  ownerId TEXT NOT NULL,
+  ownerName TEXT NOT NULL,
+  sessionId TEXT,
+  name TEXT NOT NULL,
+  size INTEGER,
+  type TEXT,
+  uploadedAt INTEGER NOT NULL,
+  inProcess INTEGER NOT NULL DEFAULT 0,
+  notarized INTEGER NOT NULL DEFAULT 0,
+  notarizedAt INTEGER,
+  notaryId TEXT,
+  notaryName TEXT,
+  notaryReview TEXT DEFAULT 'pending',
+  notaryReviewedAt INTEGER,
+  status TEXT NOT NULL DEFAULT 'uploaded'
+);
 `;
 
 const now = () => Math.floor(Date.now());
@@ -186,8 +213,34 @@ async function initDatabase() {
   }
 
   db.exec(initSql);
+  ensureOwnerDocumentsSchema();
   setupPreparedStatements();
   persistDatabase();
+}
+
+function ensureOwnerDocumentsSchema() {
+  try {
+    const res = db.exec("PRAGMA table_info(owner_documents);");
+    const columns = (res[0]?.values || []).map((row) => row[1]);
+    if (!columns.includes('status')) {
+      console.log('🔧 Adding missing owner_documents.status column');
+      db.exec("ALTER TABLE owner_documents ADD COLUMN status TEXT NOT NULL DEFAULT 'uploaded';");
+    }
+
+    // Normalize legacy rows from earlier workflow bug where accepted docs were marked notarized.
+    db.exec(`
+      UPDATE owner_documents
+      SET notarized = 0,
+          notarizedAt = NULL,
+          inProcess = 1,
+          status = 'accepted'
+      WHERE notaryReview = 'accepted'
+        AND status != 'notarized'
+        AND notarized = 1
+    `);
+  } catch (err) {
+    console.warn('⚠️ Failed to ensure owner_documents schema:', err.message || err);
+  }
 }
 
 // Prepared statements (initialized when the database is ready)
@@ -826,15 +879,59 @@ app.put('/api/documents/:id/review', (req, res) => {
     }
 
     const nowMs = now();
+
+    // Map review to workflow state
+    const normalizedReview = String(notaryReview).trim().toLowerCase();
+    const status =
+      normalizedReview === 'accepted'
+        ? 'accepted'
+        : normalizedReview === 'rejected'
+        ? 'rejected'
+        : 'pending_review';
+
+    const inProcess = ['pending_review', 'accepted', 'session_started'].includes(status) ? 1 : 0;
+    const notarized = status === 'notarized' ? 1 : 0;
+    const notarizedAt = notarized ? nowMs : null;
+
+    // Try updating session-scoped documents first, then fall back to owner documents.
     updateDocumentReview.run({
       id,
-      notaryReview,
+      notaryReview: normalizedReview,
       notaryName: notaryName || 'Unknown Notary',
       notaryReviewedAt: nowMs,
     });
+
+    // Also update owner documents (if present), since owners now store uploads there.
+    dbRun(
+      `
+      UPDATE owner_documents
+      SET notaryReview = :notaryReview,
+          notaryReviewedAt = :notaryReviewedAt,
+          notaryName = :notaryName,
+          inProcess = :inProcess,
+          notarized = :notarized,
+          notarizedAt = :notarizedAt,
+          status = :status
+      WHERE id = :id
+    `,
+      {
+        id,
+        notaryReview: normalizedReview,
+        notaryName: notaryName || 'Unknown Notary',
+        notaryReviewedAt: nowMs,
+        inProcess,
+        notarized,
+        notarizedAt,
+        status,
+      }
+    );
+
     persistDatabase();
 
-    const document = dbGet('SELECT * FROM documents WHERE id = :id', { id });
+    let document = dbGet('SELECT * FROM documents WHERE id = :id', { id });
+    if (!document) {
+      document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+    }
     if (!document) {
       return res.status(404).json({ error: 'Document not found' });
     }
@@ -842,19 +939,288 @@ app.put('/api/documents/:id/review', (req, res) => {
     console.log(`✅ Document ${id} reviewed as ${notaryReview} by ${notaryName}`);
 
     io.emit('documentReviewUpdated', {
-      id: id,
+      id,
       documentId: id,
       sessionId: document.sessionId,
       ownerId: document.ownerId,
       notaryReview,
       notaryName,
       notaryReviewedAt: document.notaryReviewedAt,
+      status,
     });
 
     res.json(document);
   } catch (error) {
     console.error('Error updating document review:', error);
     res.status(500).json({ error: 'Failed to update document review' });
+  }
+});
+
+// Mark an owner document as fully notarized (after session completion)
+app.put('/api/owner-documents/:id/notarize', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notaryName } = req.body;
+
+    const nowMs = now();
+
+    dbRun(
+      `
+      UPDATE owner_documents
+      SET status = :status,
+          inProcess = 0,
+          notarized = 1,
+          notarizedAt = :notarizedAt,
+          notaryReview = 'accepted',
+          notaryName = :notaryName
+      WHERE id = :id
+    `,
+      {
+        id,
+        status: 'notarized',
+        notarizedAt: nowMs,
+        notaryName: notaryName || 'Unknown Notary',
+      }
+    );
+    persistDatabase();
+
+    const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+    if (!document) {
+      return res.status(404).json({ error: 'Owner document not found' });
+    }
+
+    io.emit('documentNotarized', {
+      id: document.id,
+      sessionId: document.sessionId,
+      ownerId: document.ownerId,
+      ownerName: document.ownerName,
+      name: document.name,
+      size: document.size,
+      type: document.type,
+      uploadedAt: document.uploadedAt,
+      notarized: Boolean(document.notarized),
+      status: document.status,
+      notaryReview: document.notaryReview,
+      notaryReviewedAt: document.notaryReviewedAt,
+      notaryName: document.notaryName,
+    });
+
+    res.json(document);
+  } catch (error) {
+    console.error('Error marking owner document notarized:', error);
+    res.status(500).json({ error: 'Failed to mark document as notarized' });
+  }
+});
+
+// Owner document endpoints (stored separately from session documents)
+app.post('/api/owner-documents', (req, res) => {
+  try {
+    const {
+      id,
+      ownerId,
+      ownerName,
+      sessionId,
+      name,
+      size,
+      type,
+      uploadedAt,
+      status,
+    } = req.body;
+
+    const safeOwnerName = String(ownerName || '').trim() || 'Owner';
+
+    if (!id || !ownerId || !name) {
+      return res.status(400).json({ error: 'Missing required fields: id, ownerId, name' });
+    }
+
+    const nowMs = now();
+    const uploadedMs = uploadedAt ? new Date(uploadedAt).getTime() : nowMs;
+    const normalizedStatus = String(status || 'uploaded').trim().toLowerCase();
+
+    // Derive helpers for backwards compatibility
+    const isInProcess = ['pending_review', 'accepted', 'session_started'].includes(normalizedStatus);
+    const isNotarized = normalizedStatus === 'notarized';
+
+    dbRun(
+      `
+      INSERT INTO owner_documents (id, ownerId, ownerName, sessionId, name, size, type, uploadedAt, inProcess, notarized, notarizedAt, notaryId, notaryName, notaryReview, notaryReviewedAt, status)
+      VALUES (:id, :ownerId, :ownerName, :sessionId, :name, :size, :type, :uploadedAt, :inProcess, :notarized, :notarizedAt, :notaryId, :notaryName, :notaryReview, :notaryReviewedAt, :status)
+      ON CONFLICT(id) DO UPDATE SET
+        ownerId = excluded.ownerId,
+        ownerName = excluded.ownerName,
+        sessionId = excluded.sessionId,
+        name = excluded.name,
+        size = excluded.size,
+        type = excluded.type,
+        uploadedAt = excluded.uploadedAt,
+        inProcess = excluded.inProcess,
+        notarized = excluded.notarized,
+        notarizedAt = excluded.notarizedAt,
+        notaryId = excluded.notaryId,
+        notaryName = excluded.notaryName,
+        notaryReview = excluded.notaryReview,
+        notaryReviewedAt = excluded.notaryReviewedAt,
+        status = excluded.status
+    `,
+      {
+        id,
+        ownerId,
+        ownerName: safeOwnerName,
+        sessionId: sessionId || null,
+        name,
+        size: Number(size) || 0,
+        type: type || 'application/octet-stream',
+        uploadedAt: uploadedMs,
+        inProcess: isInProcess ? 1 : 0,
+        notarized: isNotarized ? 1 : 0,
+        notarizedAt: isNotarized ? nowMs : null,
+        notaryId: null,
+        notaryName: null,
+        notaryReview: normalizedStatus === 'pending_review' ? 'pending' : normalizedStatus === 'accepted' ? 'accepted' : 'pending',
+        notaryReviewedAt: null,
+        status: normalizedStatus,
+      }
+    );
+    persistDatabase();
+
+    const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+
+    console.log(`📄 Owner document saved: ${name} by ${safeOwnerName}`);
+
+    if (isInProcess) {
+      io.emit('documentNotarized', {
+        id: document.id,
+        sessionId: document.sessionId,
+        ownerId: document.ownerId,
+        ownerName: document.ownerName,
+        name: document.name,
+        size: document.size,
+        type: document.type,
+        uploadedAt: document.uploadedAt,
+        notarized: Boolean(document.notarized),
+        notaryReview: document.notaryReview || 'pending',
+        notaryReviewedAt: document.notaryReviewedAt,
+        notaryName: document.notaryName,
+      });
+      console.log(`📡 Broadcasted documentNotarized to all clients: ${document.id}`);
+    } else {
+      io.emit('documentNotarizationCancelled', {
+        documentId: document.id,
+      });
+      console.log(`📡 Broadcasted documentNotarizationCancelled event for ${id}`);
+    }
+
+    res.json(document);
+  } catch (error) {
+    console.error('Error saving owner document:', error);
+    res.status(500).json({ error: 'Failed to save owner document', details: error.message });
+  }
+});
+
+app.get('/api/owner-documents', (req, res) => {
+  try {
+    const { ownerId, inProcess, notarized, status } = req.query;
+
+    const inProcessFilter = inProcess === undefined ? null : (inProcess === '1' || inProcess === 'true' ? 1 : 0);
+    const notarizedFilter = notarized === undefined ? null : (notarized === '1' || notarized === 'true' ? 1 : 0);
+    const statusFilter = typeof status === 'string' ? status.trim().toLowerCase() : null;
+
+    const documents = dbAll(
+      `SELECT * FROM owner_documents
+       WHERE (:ownerId IS NULL OR ownerId = :ownerId)
+         AND (:inProcess IS NULL OR inProcess = :inProcess)
+         AND (:notarized IS NULL OR notarized = :notarized)
+         AND (:status IS NULL OR status = :status)
+       ORDER BY uploadedAt DESC`,
+      { ownerId: ownerId || null, inProcess: inProcessFilter, notarized: notarizedFilter, status: statusFilter }
+    );
+
+    res.json(documents);
+  } catch (error) {
+    console.error('Error fetching owner documents:', error);
+    res.status(500).json({ error: 'Failed to fetch owner documents' });
+  }
+});
+
+app.get('/api/owner-documents/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+    if (!document) {
+      return res.status(404).json({ error: 'Owner document not found' });
+    }
+    res.json(document);
+  } catch (error) {
+    console.error('Error fetching owner document:', error);
+    res.status(500).json({ error: 'Failed to fetch owner document' });
+  }
+});
+
+app.put('/api/owner-documents/:id/review', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { notaryReview, notaryName } = req.body;
+
+    if (!notaryReview || !['accepted', 'rejected', 'pending'].includes(notaryReview)) {
+      return res.status(400).json({ error: 'Invalid review status' });
+    }
+
+    const nowMs = now();
+    const status =
+      notaryReview === 'accepted'
+        ? 'accepted'
+        : notaryReview === 'rejected'
+        ? 'rejected'
+        : 'pending_review';
+    const inProcess = status === 'accepted' || status === 'pending_review' ? 1 : 0;
+
+    dbRun(
+      `
+      UPDATE owner_documents
+      SET notaryReview = :notaryReview,
+          notaryReviewedAt = :notaryReviewedAt,
+          notaryName = :notaryName,
+          status = :status,
+          inProcess = :inProcess,
+          notarized = :notarized,
+          notarizedAt = :notarizedAt
+      WHERE id = :id
+    `,
+      {
+        id,
+        notaryReview,
+        notaryName: notaryName || 'Unknown Notary',
+        notaryReviewedAt: nowMs,
+        status,
+        inProcess,
+        notarized: 0,
+        notarizedAt: null,
+      }
+    );
+    persistDatabase();
+
+    const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+    if (!document) {
+      return res.status(404).json({ error: 'Owner document not found' });
+    }
+
+    console.log(`✅ Owner document ${id} reviewed as ${notaryReview} by ${notaryName}`);
+
+    io.emit('documentReviewUpdated', {
+      id,
+      documentId: id,
+      sessionId: document.sessionId,
+      ownerId: document.ownerId,
+      notaryReview,
+      notaryName,
+      notaryReviewedAt: document.notaryReviewedAt,
+      status: document.status,
+    });
+
+    res.json(document);
+  } catch (error) {
+    console.error('Error updating owner document review:', error);
+    res.status(500).json({ error: 'Failed to update owner document review' });
   }
 });
 
@@ -941,6 +1307,40 @@ io.on('connection', (socket) => {
   // Handle notary starting a session — broadcast to all connected clients (especially owner)
   socket.on('notarySessionStarted', (data) => {
     console.log('🔔 Notary started session:', data);
+
+    // Persist session start state to owner document (so owner dashboard can reflect it on refresh)
+    try {
+      if (data?.documentId) {
+        dbRun(
+          `
+          UPDATE owner_documents
+          SET status = :status,
+              sessionId = :sessionId,
+              inProcess = :inProcess,
+              notarized = :notarized,
+              notaryReview = :notaryReview,
+              notaryName = :notaryName,
+              notaryId = :notaryId
+          WHERE id = :id
+        `,
+          {
+            id: data.documentId,
+            status: 'session_started',
+            sessionId: data.sessionId || null,
+            inProcess: 1,
+            notarized: 0,
+            notaryReview: 'accepted',
+            notaryName: data.notaryName || 'Unknown Notary',
+            notaryId: data.notaryUserId || null,
+          }
+        );
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to persist session started status for document:', data.documentId, err?.message || err);
+    }
+
+    persistDatabase();
+
     // Broadcast with complete context so owner knows to show "Join Session" button
     io.emit('notarySessionStarted', {
       documentId: data.documentId,

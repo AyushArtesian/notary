@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchNotarizedDocuments, updateDocumentReview } from '../utils/apiClient'
+import { fetchOwnerDocuments, updateOwnerDocumentReview } from '../utils/apiClient'
 import socket from '../socket/socket'
 
 const formatDate = (iso) => {
@@ -17,14 +17,19 @@ const formatDate = (iso) => {
 }
 
 const getReviewBadgeStyle = (status) => {
-  if (status === 'accepted') {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'accepted' || normalized === 'notarized') {
     return { background: '#d1fae5', color: '#065f46' }
   }
-
-  if (status === 'rejected') {
+  if (normalized === 'rejected') {
     return { background: '#fee2e2', color: '#991b1b' }
   }
-
+  if (normalized === 'session_started') {
+    return { background: '#cfe2ff', color: '#0a4e9b' }
+  }
+  if (normalized === 'pending_review' || normalized === 'uploaded') {
+    return { background: '#fff3cd', color: '#856404' }
+  }
   return { background: '#e5e7eb', color: '#374151' }
 }
 
@@ -32,6 +37,19 @@ const NotaryDocDashboardPage = () => {
   const navigate = useNavigate()
   const [docs, setDocs] = useState([])
   const [loading, setLoading] = useState(true)
+
+  const getWorkflowStatus = (doc) => {
+    const rawStatus = String(doc?.status || '').trim().toLowerCase()
+    const review = String(doc?.notaryReview || '').trim().toLowerCase()
+
+    if (rawStatus === 'notarized') return 'notarized'
+    if (rawStatus === 'session_started') return 'session_started'
+    if (rawStatus === 'accepted' || review === 'accepted') return 'accepted'
+    if (rawStatus === 'rejected' || review === 'rejected') return 'rejected'
+    if (rawStatus === 'uploaded' || rawStatus === 'pending_review' || review === 'pending') return 'pending_review'
+
+    return rawStatus || 'pending_review'
+  }
 
   const handleStartSession = (doc) => {
     if (!doc.sessionId) {
@@ -52,10 +70,11 @@ const NotaryDocDashboardPage = () => {
     const loadDocuments = async () => {
       try {
         setLoading(true)
-        const documents = await fetchNotarizedDocuments()
+        // Load documents that are not yet fully notarized (including uploaded/pending/accepted/session-started)
+        const documents = await fetchOwnerDocuments({ notarized: false })
         setDocs(documents)
       } catch (error) {
-        console.error('Failed to load notarized documents:', error)
+        console.error('Failed to load documents:', error)
         setDocs([])
       } finally {
         setLoading(false)
@@ -68,11 +87,15 @@ const NotaryDocDashboardPage = () => {
     const onDocumentNotarized = (newDocument) => {
       console.log('[notary-dashboard] Document notarized via socket:', newDocument)
       setDocs((prevDocs) => {
+        if (newDocument?.status === 'notarized' || newDocument?.notarized) {
+          return prevDocs.filter((d) => d.id !== newDocument.id)
+        }
+
         // Check if document already exists
         const exists = prevDocs.some((d) => d.id === newDocument.id)
         if (exists) {
           // Update existing document
-          return prevDocs.map((d) => (d.id === newDocument.id ? newDocument : d))
+          return prevDocs.map((d) => (d.id === newDocument.id ? { ...d, ...newDocument } : d))
         }
         // Add new document
         return [newDocument, ...prevDocs]
@@ -85,12 +108,36 @@ const NotaryDocDashboardPage = () => {
       setDocs((prevDocs) => prevDocs.filter((d) => d.id !== data.documentId))
     }
 
+    const onDocumentReviewUpdated = (updated) => {
+      const documentId = updated?.documentId || updated?.id
+      if (!documentId) return
+
+      setDocs((prevDocs) => {
+        const exists = prevDocs.some((d) => d.id === documentId)
+        if (!exists) return prevDocs
+
+        return prevDocs.map((d) =>
+          d.id === documentId
+            ? {
+                ...d,
+                notaryReview: updated.notaryReview || d.notaryReview,
+                notaryName: updated.notaryName || d.notaryName,
+                notaryReviewedAt: updated.notaryReviewedAt || d.notaryReviewedAt,
+                status: updated.status || d.status,
+              }
+            : d
+        )
+      })
+    }
+
     socket.on('documentNotarized', onDocumentNotarized)
     socket.on('documentNotarizationCancelled', onDocumentNotarizationCancelled)
+    socket.on('documentReviewUpdated', onDocumentReviewUpdated)
 
     return () => {
       socket.off('documentNotarized', onDocumentNotarized)
       socket.off('documentNotarizationCancelled', onDocumentNotarizationCancelled)
+      socket.off('documentReviewUpdated', onDocumentReviewUpdated)
     }
   }, [])
 
@@ -111,12 +158,15 @@ const NotaryDocDashboardPage = () => {
     const notaryName = authUser?.username || 'Notary'
 
     // Optimistic update
+    const nextStatus = decision === 'accepted' ? 'accepted' : decision === 'rejected' ? 'rejected' : 'pending_review'
+
     const updatedDocs = docs.map((doc) => {
       if (doc.id !== docId) return doc
 
       return {
         ...doc,
         notaryReview: decision,
+        status: nextStatus,
         notaryReviewedAt: new Date().toISOString(),
         notaryName,
       }
@@ -125,7 +175,7 @@ const NotaryDocDashboardPage = () => {
 
     // Call backend API
     try {
-      await updateDocumentReview(docId, decision, notaryName)
+      await updateOwnerDocumentReview(docId, decision, notaryName)
     } catch (error) {
       console.error('Failed to update document review:', error)
       // Revert on error
@@ -169,8 +219,9 @@ const NotaryDocDashboardPage = () => {
             </div>
           ) : (
             notarizedDocs.map((doc, idx) => {
-              const reviewStatus = doc.notaryReview || 'pending'
-              const badgeStyle = getReviewBadgeStyle(reviewStatus)
+              const status = getWorkflowStatus(doc)
+              const badgeStyle = getReviewBadgeStyle(status)
+              const reviewStatus = status
 
               return (
                 <div
@@ -207,7 +258,7 @@ const NotaryDocDashboardPage = () => {
                   </span>
 
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    {reviewStatus === 'accepted' ? (
+                    {status === 'accepted' ? (
                       <button
                         onClick={() => handleStartSession(doc)}
                         style={{
@@ -222,39 +273,43 @@ const NotaryDocDashboardPage = () => {
                         }}
                         title="Start a session with this document"
                       >
-                        Start
+                        Start Session
                       </button>
                     ) : null}
-                    <button
-                      onClick={() => handleDecision(doc.id, 'accepted')}
-                      style={{
-                        border: 'none',
-                        borderRadius: '8px',
-                        background: '#16a34a',
-                        color: '#ffffff',
-                        fontWeight: 600,
-                        padding: '8px 12px',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                      }}
-                    >
-                      Accept
-                    </button>
-                    <button
-                      onClick={() => handleDecision(doc.id, 'rejected')}
-                      style={{
-                        border: 'none',
-                        borderRadius: '8px',
-                        background: '#dc2626',
-                        color: '#ffffff',
-                        fontWeight: 600,
-                        padding: '8px 12px',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                      }}
-                    >
-                      Reject
-                    </button>
+                    {status !== 'accepted' && status !== 'session_started' ? (
+                      <button
+                        onClick={() => handleDecision(doc.id, 'accepted')}
+                        style={{
+                          border: 'none',
+                          borderRadius: '8px',
+                          background: '#16a34a',
+                          color: '#ffffff',
+                          fontWeight: 600,
+                          padding: '8px 12px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                        }}
+                      >
+                        Accept
+                      </button>
+                    ) : null}
+                    {status !== 'rejected' && status !== 'session_started' ? (
+                      <button
+                        onClick={() => handleDecision(doc.id, 'rejected')}
+                        style={{
+                          border: 'none',
+                          borderRadius: '8px',
+                          background: '#dc2626',
+                          color: '#ffffff',
+                          fontWeight: 600,
+                          padding: '8px 12px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                        }}
+                      >
+                        Reject
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               )

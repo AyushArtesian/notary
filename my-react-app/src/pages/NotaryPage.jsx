@@ -6,6 +6,7 @@ import CanvasBoard from "../components/CanvasBoard";
 import ScreenRecorder from "../components/ScreenRecorder";
 import socket from "../socket/socket";
 import { createDocumentDragAsset } from "../utils/documentAsset";
+import { completeOwnerDocumentNotarization } from "../utils/apiClient";
 
 const EDITOR_WIDTH = 900;
 const EDITOR_HEIGHT = 1300;
@@ -65,6 +66,7 @@ const saveNotaryElements = (sessionId, elements) => {
 const NotaryPage = ({ sessionId: passedSessionId }) => {
   const [elements, setElements] = useState([]);
   const [sessionId, setSessionId] = useState(passedSessionId || null);
+  const [documentId, setDocumentId] = useState(null);
   const [connectedUsers, setConnectedUsers] = useState([]);
   const [documentInfo, setDocumentInfo] = useState(null);
   const [isConnected, setIsConnected] = useState(socket.connected);
@@ -141,7 +143,8 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       const params = new URLSearchParams(window.location.search);
       const wasJustStarted = params.get('sessionStarted') === 'true';
       const documentId = params.get('documentId') || sessionId;
-      
+      setDocumentId(documentId);
+
       if (wasJustStarted) {
         console.log('🔔 [NOTARY] Fresh session start detected - will emit notarySessionStarted');
         
@@ -282,14 +285,35 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     setDocumentInfo(null);
     setOwnerConnected(false);
     setConnectedUsers([]);
+    setDocumentId(null);
 
     localStorage.removeItem("notary.lastSessionId");
     const params = new URLSearchParams(window.location.search);
     params.delete("sessionId");
     params.delete("role");
+    params.delete("documentId");
     window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
 
     navigate("/notary/doc/dashboard");
+  };
+
+  const handleMarkNotarized = async () => {
+    if (!documentId) return;
+
+    const authUser = (() => {
+      try {
+        return JSON.parse(localStorage.getItem('notary.authUser') || 'null') || {};
+      } catch {
+        return {};
+      }
+    })();
+
+    try {
+      await completeOwnerDocumentNotarization(documentId, authUser.username || 'Notary');
+      console.log('✅ Notarization marked complete for', documentId);
+    } catch (error) {
+      console.error('❌ Failed to mark document notarized:', error);
+    }
   };
 
   useEffect(() => {
@@ -500,6 +524,23 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
               }}>
                 {isConnected ? "● Server connected" : "● Server offline"}
               </span>
+              <button
+                onClick={handleMarkNotarized}
+                disabled={!documentId || !ownerConnected}
+                style={{
+                  padding: "6px 10px",
+                  backgroundColor: ownerConnected ? "#2563eb" : "#9ca3af",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: ownerConnected ? "pointer" : "not-allowed",
+                  fontSize: "12px",
+                  fontWeight: "600",
+                }}
+                title={ownerConnected ? "Mark document as notarized" : "Connect to owner to complete notarization"}
+              >
+                Mark Notarized
+              </button>
               <button
                 onClick={handleEndSession}
                 style={{
