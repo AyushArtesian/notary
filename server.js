@@ -283,6 +283,7 @@ function recoverDatabase(reason) {
   dropLegacyDocumentsTable();
   setupPreparedStatements();
   loadUsersFromJson();
+  ensureSeedAdminUser();
   persistDatabase();
 }
 
@@ -356,6 +357,7 @@ async function initDatabase() {
   dropLegacyDocumentsTable();
   setupPreparedStatements();
   loadUsersFromJson();
+  ensureSeedAdminUser();
   persistDatabase();
 }
 
@@ -588,6 +590,10 @@ const normalizeRoomId = (value) => {
 const normalizeRole = (value) => String(value || '').trim().toLowerCase();
 
 const AUTH_SECRET = process.env.AUTH_SECRET || 'notary-dev-auth-secret';
+const ADMIN_SEED_USER_ID = process.env.ADMIN_SEED_USER_ID || 'admin-seed-001';
+const ADMIN_SEED_USERNAME = process.env.ADMIN_SEED_USERNAME || 'admin';
+const ADMIN_SEED_EMAIL = process.env.ADMIN_SEED_EMAIL || 'admin@notary.local';
+const ADMIN_SEED_PASSWORD = process.env.ADMIN_SEED_PASSWORD || 'Admin@123';
 
 // User-related queries are executed via helper functions (dbGet/dbAll) to keep sql.js usage consistent.
 
@@ -619,6 +625,50 @@ const createToken = (user) => {
     .update(encodedPayload)
     .digest('base64url');
   return `${encodedPayload}.${signature}`;
+};
+
+const ensureSeedAdminUser = () => {
+  try {
+    const username = String(ADMIN_SEED_USERNAME || '').trim();
+    const email = String(ADMIN_SEED_EMAIL || '').trim().toLowerCase();
+    const password = String(ADMIN_SEED_PASSWORD || '');
+    const userId = String(ADMIN_SEED_USER_ID || '').trim() || crypto.randomUUID();
+
+    if (!username || !email || !password) {
+      console.warn('⚠️ Admin seed skipped: missing ADMIN_SEED_* env values.');
+      return;
+    }
+
+    const existingByUsername = dbGet('SELECT * FROM users WHERE username = :username', { username });
+    const existingByEmail = dbGet('SELECT * FROM users WHERE email = :email', { email });
+    const existingUser = existingByUsername || existingByEmail;
+    const createdAt = now();
+
+    const passwordHash = hashPassword(password);
+
+    if (!existingUser) {
+      dbRun(
+        'INSERT INTO users (userId, username, email, passwordHash, role, createdAt) VALUES (:userId, :username, :email, :passwordHash, :role, :createdAt)',
+        { userId, username, email, passwordHash, role: 'admin', createdAt }
+      );
+      appendUserToJson({ userId, username, email, passwordHash, role: 'admin', createdAt });
+      console.log(`✅ Seeded admin user created: ${username}`);
+      return;
+    }
+
+    dbRun(
+      'UPDATE users SET role = :role, email = :email, passwordHash = :passwordHash WHERE userId = :userId',
+      {
+        role: 'admin',
+        email,
+        passwordHash,
+        userId: existingUser.userId,
+      }
+    );
+    console.log(`✅ Seeded admin credentials refreshed for user: ${username}`);
+  } catch (error) {
+    console.warn('⚠️ Failed to ensure seeded admin user:', error?.message || error);
+  }
 };
 
 // Auth API Endpoints
@@ -721,6 +771,100 @@ app.get('/api/users', (req, res) => {
   } catch (error) {
     console.error('Error fetching users:', error);
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+app.get('/api/admin/overview', (req, res) => {
+  try {
+    const users = dbAll('SELECT userId, username, email, role, createdAt FROM users ORDER BY createdAt DESC');
+    const documents = dbAll('SELECT * FROM owner_documents ORDER BY uploadedAt DESC');
+
+    const activeUserMap = new Map();
+    for (const [socketId, info] of userSessions.entries()) {
+      if (!info?.userId) continue;
+      const current = activeUserMap.get(info.userId) || {
+        userId: info.userId,
+        username: info.username,
+        role: info.role,
+        sessions: new Set(),
+        sockets: new Set(),
+      };
+      current.sessions.add(info.roomId);
+      current.sockets.add(socketId);
+      activeUserMap.set(info.userId, current);
+    }
+
+    const usersWithWork = users.map((user) => {
+      const role = normalizeRole(user.role);
+      const ownedDocs = role === 'owner'
+        ? documents.filter((doc) => doc.ownerId === user.userId)
+        : [];
+      const reviewedDocs = role === 'notary'
+        ? documents.filter((doc) => {
+            const byId = String(doc.notaryId || '').trim() === String(user.userId || '').trim();
+            const byName = String(doc.notaryName || '').trim().toLowerCase() === String(user.username || '').trim().toLowerCase();
+            return byId || byName;
+          })
+        : [];
+
+      const activeMeta = activeUserMap.get(user.userId);
+      const lastOwnerActivity = ownedDocs.reduce((acc, doc) => Math.max(acc, Number(doc.uploadedAt) || 0), 0);
+      const lastNotaryActivity = reviewedDocs.reduce(
+        (acc, doc) => Math.max(acc, Number(doc.notaryReviewedAt) || Number(doc.notarizedAt) || 0),
+        0
+      );
+
+      return {
+        ...user,
+        isActive: Boolean(activeMeta),
+        activeSessionIds: activeMeta ? Array.from(activeMeta.sessions) : [],
+        activeSocketCount: activeMeta ? activeMeta.sockets.size : 0,
+        lastActivityAt: Math.max(lastOwnerActivity, lastNotaryActivity, Number(user.createdAt) || 0) || null,
+        work: {
+          ownedDocuments: ownedDocs.length,
+          ownedNotarizedDocuments: ownedDocs.filter((doc) => Number(doc.notarized) === 1).length,
+          ownedInProcessDocuments: ownedDocs.filter((doc) => Number(doc.inProcess) === 1).length,
+          reviewedDocuments: reviewedDocs.length,
+          finalizedNotarizations: reviewedDocs.filter((doc) => String(doc.status || '').toLowerCase() === 'notarized').length,
+        },
+      };
+    });
+
+    const activeSessions = Array.from(sessions.entries()).map(([sessionId, session]) => ({
+      sessionId,
+      createdAt: session.created || null,
+      userCount: Array.isArray(session.users) ? session.users.length : 0,
+      users: Array.isArray(session.users)
+        ? session.users.map((u) => ({
+            socketId: u.socketId,
+            userId: u.userId,
+            username: u.username,
+            role: normalizeRole(u.role),
+          }))
+        : [],
+    }));
+
+    const summary = {
+      totalUsers: users.length,
+      owners: users.filter((u) => normalizeRole(u.role) === 'owner').length,
+      notaries: users.filter((u) => normalizeRole(u.role) === 'notary').length,
+      admins: users.filter((u) => normalizeRole(u.role) === 'admin').length,
+      totalDocuments: documents.length,
+      notarizedDocuments: documents.filter((d) => Number(d.notarized) === 1).length,
+      inProcessDocuments: documents.filter((d) => Number(d.inProcess) === 1).length,
+      activeUsers: activeUserMap.size,
+      activeSessions: activeSessions.length,
+    };
+
+    res.json({
+      summary,
+      users: usersWithWork,
+      recentDocuments: documents.slice(0, 100),
+      activeSessions,
+    });
+  } catch (error) {
+    console.error('Error fetching admin overview:', error);
+    res.status(500).json({ error: 'Failed to fetch admin overview' });
   }
 });
 

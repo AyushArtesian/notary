@@ -14,5 +14,13 @@
     "passwordHash": "9f5de8aad345f5799ccbb1ee3fcbeedd:a19ae8f5f10ec82f65c1435f1032f3bc2a8cc56d38fc6d60325fec8a93bba5cd068688ed191aeae83d5e03155e564820a3dc1406614ec606b8953dbabb8a3394",
     "role": "notary",
     "createdAt": "2026-03-19T10:27:07.841Z"
+  },
+  {
+    "userId": "admin-seed-001",
+    "username": "admin",
+    "email": "admin@notary.local",
+    "passwordHash": "2296ce3b16c301841d14a5bd6a8aba45:8bca680a63ee24f7024a4d7abc57796eceb23ce58b4591a9319905d096eed86be4237823d57d1d7865928163e349c5906cf104e0454ad81ccd95a929d8036de0",
+    "role": "admin",
+    "createdAt": "2026-03-19T12:26:06.121Z"
   }
 ]

@@ -93,6 +93,17 @@ async function fetchUsers() {
   }
 }
 
+async function fetchAdminOverview() {
+  const response = await fetchWithFallback('/api/admin/overview');
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.error || 'Failed to fetch admin overview');
+  }
+
+  return payload;
+}
+
 async function saveSignature(signatureData) {
   try {
     const url = '/api/signatures';
@@ -535,5 +546,5 @@ async function endOwnerDocumentSession(documentId, sessionId, notaryName, notary
     throw error;
   }
 }
-export { saveSignature, fetchSignatures, deleteSignature, saveAsset, fetchAssets, deleteAsset, registerUser, loginUser, fetchUsers, saveDocument, saveOwnerDocument, fetchDocuments, fetchOwnerDocuments, fetchNotarizedDocuments, updateDocumentReview, updateOwnerDocumentReview, deleteOwnerDocument, markOwnerDocumentSessionStarted, completeOwnerDocumentNotarization, endOwnerDocumentSession, API_BASE_URL };
+export { saveSignature, fetchSignatures, deleteSignature, saveAsset, fetchAssets, deleteAsset, registerUser, loginUser, fetchUsers, fetchAdminOverview, saveDocument, saveOwnerDocument, fetchDocuments, fetchOwnerDocuments, fetchNotarizedDocuments, updateDocumentReview, updateOwnerDocumentReview, deleteOwnerDocument, markOwnerDocumentSessionStarted, completeOwnerDocumentNotarization, endOwnerDocumentSession, API_BASE_URL };
 
