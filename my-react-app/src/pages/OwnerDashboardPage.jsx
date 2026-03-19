@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { saveOwnerDocument, fetchOwnerDocuments } from "../utils/apiClient";
+import { saveOwnerDocument, fetchOwnerDocuments, deleteOwnerDocument } from "../utils/apiClient";
 import socket from "../socket/socket";
 import PdfViewer from "../components/PdfViewer";
 import SidebarAssets from "../components/SidebarAssets";
@@ -8,7 +8,6 @@ import CanvasBoard from "../components/CanvasBoard";
 import ScreenRecorder from "../components/ScreenRecorder";
 import { createDocumentDragAsset } from "../utils/documentAsset";
 
-const STORAGE_KEY = "notary.ownerDocs";
 const ACTIVE_SESSIONS_KEY = "notary.ownerActiveSessions";
 const DASHBOARD_STATE_KEY = "notary.ownerDashboardState";
 const UPLOADED_ASSETS_KEY_PREFIX = "notary.ownerUploadedAssets";
@@ -33,16 +32,10 @@ const saveUploadedAssets = (docId, assets) => {
 };
 
 const loadDocs = () => {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-  } catch {
-    return [];
-  }
+  return [];
 };
 
-const saveDocs = (docs) => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(docs));
-};
+const saveDocs = () => {};
 
 const loadActiveSessions = () => {
   try {
@@ -283,7 +276,7 @@ const NotarizeConfirmModal = ({ doc, onClose, onConfirm }) => {
 
 const OwnerDashboardPage = () => {
   const restoredDashboardState = loadDashboardState();
-  const [docs, setDocs] = useState(loadDocs);
+  const [docs, setDocs] = useState([]);
   const [notarizingDoc, setNotarizingDoc] = useState(null);
   const [sessionId, setSessionId] = useState("");
 
@@ -300,7 +293,7 @@ const OwnerDashboardPage = () => {
       if (!authUser?.userId) return;
       try {
         const backendDocs = await fetchOwnerDocuments({ ownerId: authUser.userId });
-        if (Array.isArray(backendDocs) && backendDocs.length > 0) {
+        if (Array.isArray(backendDocs)) {
           setDocs(backendDocs);
           saveDocs(backendDocs);
         }
@@ -473,6 +466,23 @@ const OwnerDashboardPage = () => {
 
     const onNotarySessionEnded = (data) => {
       console.log('❌ [OWNER] Received notarySessionEnded event:', data);
+
+      // If owner is currently inside this ended session, force-close editor and return to dashboard.
+      const endedSessionId = data?.sessionId;
+      if (endedSessionId && currentSessionIdRef.current === endedSessionId) {
+        currentSessionIdRef.current = null;
+        setActiveSessionDocId(null);
+        setNotaries([]);
+        setSessionDocName("");
+        setSessionJoined(false);
+        setUploadedFile(null);
+        setUploadedFileName("");
+        setUploadedAsset(null);
+        lastAutoSharedDocKeyRef.current = "";
+        localStorage.removeItem(DASHBOARD_STATE_KEY);
+        navigate("/owner/doc/dashboard", { replace: true });
+      }
+
       setActiveSessions((prev) => {
         const updated = { ...prev };
         // Find and remove the session ID for the document with this sessionId
@@ -674,13 +684,6 @@ const OwnerDashboardPage = () => {
       }
     })();
 
-    socket.emit("joinSession", {
-      roomId: sessionIdToJoin,
-      role: "owner",
-      userId: authUser?.userId || socket.id,
-      username: authUser?.username || "Owner",
-    });
-
     const onUsersConnected = (users) => {
       const notaryUsers = users.filter((u) => u.role === "notary");
       setNotaries(notaryUsers);
@@ -718,6 +721,13 @@ const OwnerDashboardPage = () => {
     socket.on("elementUpdated", onElementUpdated);
     socket.on("elementRemoved", onElementRemoved);
 
+    socket.emit("joinSession", {
+      roomId: sessionIdToJoin,
+      role: "owner",
+      userId: authUser?.userId || socket.id,
+      username: authUser?.username || "Owner",
+    });
+
     return () => {
       socket.off("usersConnected", onUsersConnected);
       socket.off("documentShared", onDocumentShared);
@@ -739,12 +749,11 @@ const OwnerDashboardPage = () => {
   }, [sessionJoined]);
 
   const handleJoinSession = (doc) => {
-    // Resolve from active, previous, document payload, then current owner session.
+    // Resolve only from document-specific session sources.
     const sessionIdVal =
       activeSessions[doc.id] ||
       previousSessions[doc.id] ||
-      doc.sessionId ||
-      sessionId;
+      doc.sessionId;
     if (sessionIdVal) {
       setActiveSessions((prev) => ({ ...prev, [doc.id]: sessionIdVal }));
       setActiveSessionDocId(doc.id);
@@ -878,7 +887,11 @@ const OwnerDashboardPage = () => {
 
     // Update backend to mark not in process / not notarized
     try {
-      const docSessionId = activeSessions[doc.id] || previousSessions[doc.id] || sessionId || `notary-session-${Date.now()}`;
+      const docSessionId =
+        doc.sessionId ||
+        activeSessions[doc.id] ||
+        previousSessions[doc.id] ||
+        `notary-session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       await saveOwnerDocument({
         id: doc.id,
         ownerId: authUser.userId,
@@ -887,6 +900,7 @@ const OwnerDashboardPage = () => {
         name: doc.name,
         size: doc.size,
         type: doc.type,
+        dataUrl: doc.dataUrl,
         uploadedAt: doc.uploadedAt,
         status: 'uploaded',
       });
@@ -901,15 +915,35 @@ const OwnerDashboardPage = () => {
     }
   };
 
-  const handleDelete = (doc) => {
+  const handleDelete = async (doc) => {
+    const previous = docs;
     const updated = docs.filter((d) => d.id !== doc.id);
     setDocs(updated);
     saveDocs(updated);
+
+    try {
+      await deleteOwnerDocument(doc.id);
+
+      const latestDocs = await fetchOwnerDocuments({ ownerId: authUser.userId });
+      setDocs(latestDocs);
+      saveDocs(latestDocs);
+    } catch (error) {
+      console.error("Failed to delete owner document:", error);
+      setDocs(previous);
+      saveDocs(previous);
+      alert("Failed to delete document. Please try again.");
+    }
   };
 
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+
+    if (!authUser?.userId) {
+      alert('Please login again. Unable to save document without owner ID.');
+      e.target.value = "";
+      return;
+    }
 
     const ownerName = (() => {
       try {
@@ -921,7 +955,7 @@ const OwnerDashboardPage = () => {
 
     const reader = new FileReader();
     reader.onload = async (ev) => {
-      const currentSessionId = sessionId || `notary-session-${Date.now()}`;
+      const currentSessionId = `notary-session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const newDoc = {
         id: `doc-${Date.now()}`,
         name: file.name,
@@ -935,7 +969,8 @@ const OwnerDashboardPage = () => {
         dataUrl: ev.target.result,
         sessionId: currentSessionId,
       };
-      const updated = [newDoc, ...docs];
+      const previousDocs = docs;
+      const updated = [newDoc, ...previousDocs];
       setDocs(updated);
       saveDocs(updated);
 
@@ -949,16 +984,23 @@ const OwnerDashboardPage = () => {
           name: newDoc.name,
           size: newDoc.size,
           type: newDoc.type,
+          dataUrl: newDoc.dataUrl,
           uploadedAt: newDoc.uploadedAt,
           status: 'uploaded',
         });
-        console.log('✅ [OWNER] Uploaded document saved to backend:', newDoc.name);
+
+        const backendDocs = await fetchOwnerDocuments({ ownerId: authUser.userId });
+        if (Array.isArray(backendDocs)) {
+          setDocs(backendDocs);
+          saveDocs(backendDocs);
+        }
+
+        console.log('✅ [OWNER] Uploaded document saved and synced from backend:', newDoc.name);
       } catch (error) {
         console.warn('⚠️ [OWNER] Failed to save uploaded document to backend:', error);
-      }
-
-      if (currentSessionId && currentSessionId.startsWith('notary-session-')) {
-        localStorage.setItem('notary.ownerSessionId', currentSessionId);
+        setDocs(previousDocs);
+        saveDocs(previousDocs);
+        alert('Upload failed to save in database. Please try again.');
       }
     };
     reader.readAsDataURL(file);
@@ -987,11 +1029,15 @@ const OwnerDashboardPage = () => {
       }
     })();
 
+    const docSessionId = `notary-session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const updatedDoc = {
       ...notarizingDoc,
       ownerName,
+      sessionId: docSessionId,
       status: "pending_review",
       notaryReview: "pending",
+      notarized: false,
+      notarizedAt: null,
       notaryName: "",
       notaryReviewedAt: null,
     };
@@ -1003,7 +1049,6 @@ const OwnerDashboardPage = () => {
 
     // Save to backend
     try {
-      const docSessionId = activeSessions[updatedDoc.id] || previousSessions[updatedDoc.id] || sessionId || `notary-session-${Date.now()}`;
       // IMPORTANT: Don't set activeSessions here! Only set it when notary actually starts the session.
       // setPreviousSessions can stay for continuing past sessions, but NOT for new ones
       console.log('📤 [OWNER] Saving document for notary review with sessionId:', docSessionId);
@@ -1015,6 +1060,7 @@ const OwnerDashboardPage = () => {
         name: updatedDoc.name,
         size: updatedDoc.size,
         type: updatedDoc.type,
+        dataUrl: updatedDoc.dataUrl,
         uploadedAt: updatedDoc.uploadedAt,
         status: 'pending_review',
       });
@@ -1055,7 +1101,7 @@ const OwnerDashboardPage = () => {
           {/* Sidebar */}
           <SidebarAssets
             userRole="owner"
-            sessionId={activeSessions[activeSessionDocId] || previousSessions[activeSessionDocId] || sessionId}
+            sessionId={activeSessions[activeSessionDocId] || previousSessions[activeSessionDocId]}
             userId={authUser.userId}
             uploadedAsset={uploadedAsset}
             uploadedAssets={uploadedAssets}
@@ -1570,15 +1616,16 @@ const OwnerDashboardPage = () => {
                   : rawStatus === 'rejected' || review === 'rejected'
                   ? 'rejected'
                   : rawStatus || (doc.notarized ? 'notarized' : 'uploaded');
+                  const isNotarized = status === 'notarized';
               const statusStyle = STATUS_COLORS[status] || STATUS_COLORS.uploaded;
               const hasActiveSession = activeSessions[doc.id];
               const hasPreviousSession = previousSessions[doc.id];
-              const hasDocumentSession = doc.sessionId || sessionId;
+              const hasDocumentSession = doc.sessionId || hasActiveSession || hasPreviousSession;
 
-              // Join button appears ONLY when session has started in the workflow
+              // Join button appears when backend marks session_started and a session id is available.
+              // Do not depend only on in-memory socket maps because the owner may miss the live event.
               const showJoinButton =
                 status === 'session_started' &&
-                (hasActiveSession || hasPreviousSession) &&
                 Boolean(hasDocumentSession);
 
               const displayStatus =
@@ -1627,7 +1674,7 @@ const OwnerDashboardPage = () => {
                       }}
                     >
                       📄
-                      {doc.notarized && (
+                      {isNotarized && (
                         <div
                           style={{
                             position: "absolute",
@@ -1718,7 +1765,7 @@ const OwnerDashboardPage = () => {
                     onNotarize={() => handleNotarize(doc)}
                     onCancelNotarize={() => handleCancelNotarize(doc)}
                     onDelete={() => handleDelete(doc)}
-                    notarized={doc.notarized}
+                    notarized={isNotarized}
                   />
                 </div>
               );

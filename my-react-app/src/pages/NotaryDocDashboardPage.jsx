@@ -130,14 +130,22 @@ const NotaryDocDashboardPage = () => {
       })
     }
 
+    const onDocumentDeleted = (payload) => {
+      const documentId = payload?.documentId || payload?.id
+      if (!documentId) return
+      setDocs((prevDocs) => prevDocs.filter((d) => d.id !== documentId))
+    }
+
     socket.on('documentNotarized', onDocumentNotarized)
     socket.on('documentNotarizationCancelled', onDocumentNotarizationCancelled)
     socket.on('documentReviewUpdated', onDocumentReviewUpdated)
+    socket.on('documentDeleted', onDocumentDeleted)
 
     return () => {
       socket.off('documentNotarized', onDocumentNotarized)
       socket.off('documentNotarizationCancelled', onDocumentNotarizationCancelled)
       socket.off('documentReviewUpdated', onDocumentReviewUpdated)
+      socket.off('documentDeleted', onDocumentDeleted)
     }
   }, [])
 

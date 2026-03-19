@@ -20,7 +20,6 @@ process.on('unhandledRejection', (reason) => {
 
 const express = require('express');
 const http = require('http');
-const net = require('net');
 const socketIO = require('socket.io');
 const cors = require('cors');
 const fs = require('fs');
@@ -62,7 +61,8 @@ const io = socketIO(server, {
 });
 
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Setup SQLite database (using sql.js in Node to avoid native build tool requirements)
 const dbPath = path.resolve(__dirname, 'data', 'notary.db');
@@ -83,23 +83,6 @@ CREATE TABLE IF NOT EXISTS users (
   createdAt INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS documents (
-  id TEXT PRIMARY KEY,
-  sessionId TEXT NOT NULL,
-  ownerId TEXT,
-  ownerName TEXT NOT NULL,
-  notaryId TEXT,
-  notaryName TEXT,
-  name TEXT NOT NULL,
-  size INTEGER,
-  type TEXT,
-  uploadedAt INTEGER NOT NULL,
-  notarized INTEGER NOT NULL DEFAULT 0,
-  notarizedAt INTEGER,
-  notaryReview TEXT DEFAULT 'pending',
-  notaryReviewedAt INTEGER
-);
-
 CREATE TABLE IF NOT EXISTS signatures (
   id TEXT PRIMARY KEY,
   sessionId TEXT NOT NULL,
@@ -107,6 +90,22 @@ CREATE TABLE IF NOT EXISTS signatures (
   username TEXT,
   name TEXT,
   image TEXT NOT NULL,
+  userRole TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS assets (
+  id TEXT PRIMARY KEY,
+  sessionId TEXT,
+  userId TEXT,
+  username TEXT,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  image TEXT,
+  text TEXT,
+  width INTEGER,
+  height INTEGER,
   userRole TEXT NOT NULL,
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL
@@ -131,6 +130,7 @@ CREATE TABLE IF NOT EXISTS owner_documents (
   name TEXT NOT NULL,
   size INTEGER,
   type TEXT,
+  dataUrl TEXT,
   uploadedAt INTEGER NOT NULL,
   inProcess INTEGER NOT NULL DEFAULT 0,
   notarized INTEGER NOT NULL DEFAULT 0,
@@ -214,6 +214,8 @@ async function initDatabase() {
 
   db.exec(initSql);
   ensureOwnerDocumentsSchema();
+  ensureAssetsSchema();
+  dropLegacyDocumentsTable();
   setupPreparedStatements();
   persistDatabase();
 }
@@ -225,6 +227,10 @@ function ensureOwnerDocumentsSchema() {
     if (!columns.includes('status')) {
       console.log('🔧 Adding missing owner_documents.status column');
       db.exec("ALTER TABLE owner_documents ADD COLUMN status TEXT NOT NULL DEFAULT 'uploaded';");
+    }
+    if (!columns.includes('dataUrl')) {
+      console.log('🔧 Adding missing owner_documents.dataUrl column');
+      db.exec("ALTER TABLE owner_documents ADD COLUMN dataUrl TEXT;");
     }
 
     // Normalize legacy rows from earlier workflow bug where accepted docs were marked notarized.
@@ -243,16 +249,48 @@ function ensureOwnerDocumentsSchema() {
   }
 }
 
+function ensureAssetsSchema() {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS assets (
+        id TEXT PRIMARY KEY,
+        sessionId TEXT,
+        userId TEXT,
+        username TEXT,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        image TEXT,
+        text TEXT,
+        width INTEGER,
+        height INTEGER,
+        userRole TEXT NOT NULL,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL
+      );
+    `);
+  } catch (err) {
+    console.warn('⚠️ Failed to ensure assets schema:', err.message || err);
+  }
+}
+
+function dropLegacyDocumentsTable() {
+  try {
+    const hasDocumentsTable = dbAll(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='documents'"
+    ).length > 0;
+    if (hasDocumentsTable) {
+      db.exec('DROP TABLE IF EXISTS documents;');
+      console.log('🧹 Dropped legacy documents table');
+    }
+  } catch (err) {
+    console.warn('⚠️ Failed to drop legacy documents table:', err.message || err);
+  }
+}
+
 // Prepared statements (initialized when the database is ready)
 let insertOrUpdateSignature;
 let selectSignaturesByRole;
 let deleteSignatureById;
-
-let insertOrUpdateDocument;
-let selectDocuments;
-let selectNotarizedDocuments;
-let updateDocumentReview;
-let selectDocumentById;
 
 let selectUserByUsername;
 let selectUserByEmail;
@@ -283,50 +321,6 @@ function setupPreparedStatements() {
   `);
 
   deleteSignatureById = db.prepare(`DELETE FROM signatures WHERE id = :id`);
-
-  insertOrUpdateDocument = db.prepare(`
-    INSERT INTO documents (id, sessionId, ownerId, ownerName, notaryId, notaryName, name, size, type, uploadedAt, notarized, notarizedAt, notaryReview, notaryReviewedAt)
-    VALUES (:id, :sessionId, :ownerId, :ownerName, :notaryId, :notaryName, :name, :size, :type, :uploadedAt, :notarized, :notarizedAt, :notaryReview, :notaryReviewedAt)
-    ON CONFLICT(id) DO UPDATE SET
-      sessionId = excluded.sessionId,
-      ownerId = excluded.ownerId,
-      ownerName = excluded.ownerName,
-      notaryId = excluded.notaryId,
-      notaryName = excluded.notaryName,
-      name = excluded.name,
-      size = excluded.size,
-      type = excluded.type,
-      uploadedAt = excluded.uploadedAt,
-      notarized = excluded.notarized,
-      notarizedAt = excluded.notarizedAt,
-      notaryReview = excluded.notaryReview,
-      notaryReviewedAt = excluded.notaryReviewedAt
-  `);
-
-  selectDocuments = db.prepare(`
-    SELECT * FROM documents
-    WHERE (:sessionId IS NULL OR sessionId = :sessionId)
-      AND (:ownerId IS NULL OR ownerId = :ownerId)
-    ORDER BY uploadedAt DESC
-  `);
-
-  selectNotarizedDocuments = db.prepare(`
-    SELECT * FROM documents
-    WHERE notarized = 1
-      AND (:sessionId IS NULL OR sessionId = :sessionId)
-      AND (:ownerId IS NULL OR ownerId = :ownerId)
-    ORDER BY uploadedAt DESC
-  `);
-
-  updateDocumentReview = db.prepare(`
-    UPDATE documents
-    SET notaryReview = :notaryReview,
-        notaryReviewedAt = :notaryReviewedAt,
-        notaryName = :notaryName
-    WHERE id = :id
-  `);
-
-  selectDocumentById = db.prepare(`SELECT * FROM documents WHERE id = :id`);
 
   selectUserByUsername = db.prepare('SELECT * FROM users WHERE username = :username');
   selectUserByEmail = db.prepare('SELECT * FROM users WHERE email = :email');
@@ -728,6 +722,110 @@ app.delete('/api/signatures/:id', (req, res) => {
   }
 });
 
+// Asset API Endpoints
+app.get('/api/assets/:userRole', (req, res) => {
+  try {
+    const { userRole } = req.params;
+    const { sessionId, userId } = req.query;
+
+    const assets = dbAll(
+      `SELECT * FROM assets
+       WHERE userRole = :userRole
+         AND (:sessionId IS NULL OR sessionId = :sessionId)
+         AND (:userId IS NULL OR userId = :userId)
+       ORDER BY createdAt DESC`,
+      { userRole, sessionId: sessionId || null, userId: userId || null }
+    );
+
+    res.json(assets);
+  } catch (error) {
+    console.error('Error fetching assets:', error);
+    res.status(500).json({ error: 'Failed to fetch assets' });
+  }
+});
+
+app.post('/api/assets', (req, res) => {
+  try {
+    const {
+      id,
+      sessionId,
+      userId,
+      username,
+      name,
+      type,
+      image,
+      text,
+      width,
+      height,
+      userRole,
+    } = req.body;
+
+    if (!id || !name || !type || !userRole) {
+      return res.status(400).json({ error: 'Missing required fields: id, name, type, userRole' });
+    }
+
+    const nowMs = now();
+    dbRun(
+      `
+      INSERT INTO assets (id, sessionId, userId, username, name, type, image, text, width, height, userRole, createdAt, updatedAt)
+      VALUES (:id, :sessionId, :userId, :username, :name, :type, :image, :text, :width, :height, :userRole, :createdAt, :updatedAt)
+      ON CONFLICT(id) DO UPDATE SET
+        sessionId = excluded.sessionId,
+        userId = excluded.userId,
+        username = excluded.username,
+        name = excluded.name,
+        type = excluded.type,
+        image = excluded.image,
+        text = excluded.text,
+        width = excluded.width,
+        height = excluded.height,
+        userRole = excluded.userRole,
+        updatedAt = excluded.updatedAt
+    `,
+      {
+        id,
+        sessionId: sessionId || null,
+        userId: userId || null,
+        username: username || null,
+        name,
+        type,
+        image: image || null,
+        text: text || null,
+        width: Number(width) || null,
+        height: Number(height) || null,
+        userRole,
+        createdAt: nowMs,
+        updatedAt: nowMs,
+      }
+    );
+
+    persistDatabase();
+    const saved = dbGet('SELECT * FROM assets WHERE id = :id', { id });
+    res.json(saved);
+  } catch (error) {
+    console.error('Error saving asset:', error);
+    res.status(500).json({ error: 'Failed to save asset', details: error.message });
+  }
+});
+
+app.delete('/api/assets/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = dbGet('SELECT * FROM assets WHERE id = :id', { id });
+    if (!existing) {
+      return res.status(404).json({ error: 'Asset not found' });
+    }
+
+    dbRun('DELETE FROM assets WHERE id = :id', { id });
+    persistDatabase();
+
+    res.json({ message: 'Asset deleted' });
+  } catch (error) {
+    console.error('Error deleting asset:', error);
+    res.status(500).json({ error: 'Failed to delete asset' });
+  }
+});
+
 // Document API Endpoints
 // Save a new notarized document (tied to a session)
 app.post('/api/documents', (req, res) => {
@@ -737,32 +835,37 @@ app.post('/api/documents', (req, res) => {
       sessionId,
       ownerId,
       ownerName,
-      notaryId,
-      notaryName,
       name,
       size,
       type,
+      dataUrl,
       uploadedAt,
       notarized,
     } = req.body;
 
     const safeOwnerName = String(ownerName || '').trim() || 'Owner';
 
-    if (!id || !sessionId || !name) {
-      return res.status(400).json({ error: 'Missing required fields: id, sessionId, name' });
+    if (!id || !sessionId || !ownerId || !name) {
+      return res.status(400).json({ error: 'Missing required fields: id, sessionId, ownerId, name' });
     }
 
     const nowMs = now();
     const uploadedMs = uploadedAt ? new Date(uploadedAt).getTime() : nowMs;
 
+    const status = notarized ? 'pending_review' : 'uploaded';
+    const inProcess = ['pending_review', 'accepted', 'session_started'].includes(status) ? 1 : 0;
+
     dbRun(
       `
-      INSERT INTO documents (id, sessionId, ownerId, ownerName, notaryId, notaryName, name, size, type, uploadedAt, notarized, notarizedAt, notaryReview, notaryReviewedAt)
-      VALUES (:id, :sessionId, :ownerId, :ownerName, :notaryId, :notaryName, :name, :size, :type, :uploadedAt, :notarized, :notarizedAt, :notaryReview, :notaryReviewedAt)
+      INSERT INTO owner_documents (id, ownerId, ownerName, sessionId, name, size, type, dataUrl, uploadedAt, inProcess, notarized, notarizedAt, notaryId, notaryName, notaryReview, notaryReviewedAt, status)
+      VALUES (:id, :ownerId, :ownerName, :sessionId, :name, :size, :type, :dataUrl, :uploadedAt, :inProcess, :notarized, :notarizedAt, :notaryId, :notaryName, :notaryReview, :notaryReviewedAt, :status)
       ON CONFLICT(id) DO UPDATE SET
-        sessionId = excluded.sessionId,
         ownerId = excluded.ownerId,
         ownerName = excluded.ownerName,
+        sessionId = excluded.sessionId,
+        dataUrl = excluded.dataUrl,
+        inProcess = excluded.inProcess,
+        status = excluded.status,
         notaryId = excluded.notaryId,
         notaryName = excluded.notaryName,
         name = excluded.name,
@@ -777,23 +880,26 @@ app.post('/api/documents', (req, res) => {
       {
         id,
         sessionId,
-        ownerId: ownerId || null,
+        ownerId,
         ownerName: safeOwnerName,
-        notaryId: notaryId || null,
-        notaryName: notaryName || null,
+        notaryId: null,
+        notaryName: null,
         name,
         size: Number(size) || 0,
         type: type || 'application/octet-stream',
+        dataUrl: typeof dataUrl === 'string' ? dataUrl : null,
         uploadedAt: uploadedMs,
+        inProcess,
         notarized: notarized ? 1 : 0,
         notarizedAt: notarized ? nowMs : null,
         notaryReview: notarized ? 'pending' : null,
         notaryReviewedAt: null,
+        status,
       }
     );
     persistDatabase();
 
-    const document = dbGet('SELECT * FROM documents WHERE id = :id', { id });
+    const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
 
     console.log(`📄 Document saved: ${name} in session ${sessionId} by ${safeOwnerName}`);
 
@@ -833,7 +939,7 @@ app.get('/api/documents', (req, res) => {
     const { sessionId, ownerId } = req.query;
 
     const documents = dbAll(
-      `SELECT * FROM documents
+      `SELECT * FROM owner_documents
        WHERE (:sessionId IS NULL OR sessionId = :sessionId)
          AND (:ownerId IS NULL OR ownerId = :ownerId)
        ORDER BY uploadedAt DESC`,
@@ -853,7 +959,7 @@ app.get('/api/documents/notarized', (req, res) => {
     const { sessionId, ownerId } = req.query;
 
     const documents = dbAll(
-      `SELECT * FROM documents
+      `SELECT * FROM owner_documents
        WHERE notarized = 1
          AND (:sessionId IS NULL OR sessionId = :sessionId)
          AND (:ownerId IS NULL OR ownerId = :ownerId)
@@ -893,15 +999,7 @@ app.put('/api/documents/:id/review', (req, res) => {
     const notarized = status === 'notarized' ? 1 : 0;
     const notarizedAt = notarized ? nowMs : null;
 
-    // Try updating session-scoped documents first, then fall back to owner documents.
-    updateDocumentReview.run({
-      id,
-      notaryReview: normalizedReview,
-      notaryName: notaryName || 'Unknown Notary',
-      notaryReviewedAt: nowMs,
-    });
-
-    // Also update owner documents (if present), since owners now store uploads there.
+    // Update owner documents (documents table has been removed).
     dbRun(
       `
       UPDATE owner_documents
@@ -928,10 +1026,7 @@ app.put('/api/documents/:id/review', (req, res) => {
 
     persistDatabase();
 
-    let document = dbGet('SELECT * FROM documents WHERE id = :id', { id });
-    if (!document) {
-      document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
-    }
+    const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!document) {
       return res.status(404).json({ error: 'Document not found' });
     }
@@ -1023,6 +1118,7 @@ app.post('/api/owner-documents', (req, res) => {
       name,
       size,
       type,
+      dataUrl,
       uploadedAt,
       status,
     } = req.body;
@@ -1043,8 +1139,8 @@ app.post('/api/owner-documents', (req, res) => {
 
     dbRun(
       `
-      INSERT INTO owner_documents (id, ownerId, ownerName, sessionId, name, size, type, uploadedAt, inProcess, notarized, notarizedAt, notaryId, notaryName, notaryReview, notaryReviewedAt, status)
-      VALUES (:id, :ownerId, :ownerName, :sessionId, :name, :size, :type, :uploadedAt, :inProcess, :notarized, :notarizedAt, :notaryId, :notaryName, :notaryReview, :notaryReviewedAt, :status)
+      INSERT INTO owner_documents (id, ownerId, ownerName, sessionId, name, size, type, dataUrl, uploadedAt, inProcess, notarized, notarizedAt, notaryId, notaryName, notaryReview, notaryReviewedAt, status)
+      VALUES (:id, :ownerId, :ownerName, :sessionId, :name, :size, :type, :dataUrl, :uploadedAt, :inProcess, :notarized, :notarizedAt, :notaryId, :notaryName, :notaryReview, :notaryReviewedAt, :status)
       ON CONFLICT(id) DO UPDATE SET
         ownerId = excluded.ownerId,
         ownerName = excluded.ownerName,
@@ -1052,6 +1148,7 @@ app.post('/api/owner-documents', (req, res) => {
         name = excluded.name,
         size = excluded.size,
         type = excluded.type,
+        dataUrl = excluded.dataUrl,
         uploadedAt = excluded.uploadedAt,
         inProcess = excluded.inProcess,
         notarized = excluded.notarized,
@@ -1070,6 +1167,7 @@ app.post('/api/owner-documents', (req, res) => {
         name,
         size: Number(size) || 0,
         type: type || 'application/octet-stream',
+        dataUrl: typeof dataUrl === 'string' ? dataUrl : null,
         uploadedAt: uploadedMs,
         inProcess: isInProcess ? 1 : 0,
         notarized: isNotarized ? 1 : 0,
@@ -1119,7 +1217,7 @@ app.post('/api/owner-documents', (req, res) => {
 
 app.get('/api/owner-documents', (req, res) => {
   try {
-    const { ownerId, inProcess, notarized, status } = req.query;
+    const { ownerId, sessionId, inProcess, notarized, status } = req.query;
 
     const inProcessFilter = inProcess === undefined ? null : (inProcess === '1' || inProcess === 'true' ? 1 : 0);
     const notarizedFilter = notarized === undefined ? null : (notarized === '1' || notarized === 'true' ? 1 : 0);
@@ -1128,11 +1226,18 @@ app.get('/api/owner-documents', (req, res) => {
     const documents = dbAll(
       `SELECT * FROM owner_documents
        WHERE (:ownerId IS NULL OR ownerId = :ownerId)
+         AND (:sessionId IS NULL OR sessionId = :sessionId)
          AND (:inProcess IS NULL OR inProcess = :inProcess)
          AND (:notarized IS NULL OR notarized = :notarized)
          AND (:status IS NULL OR status = :status)
        ORDER BY uploadedAt DESC`,
-      { ownerId: ownerId || null, inProcess: inProcessFilter, notarized: notarizedFilter, status: statusFilter }
+      {
+        ownerId: ownerId || null,
+        sessionId: sessionId || null,
+        inProcess: inProcessFilter,
+        notarized: notarizedFilter,
+        status: statusFilter,
+      }
     );
 
     res.json(documents);
@@ -1153,6 +1258,86 @@ app.get('/api/owner-documents/:id', (req, res) => {
   } catch (error) {
     console.error('Error fetching owner document:', error);
     res.status(500).json({ error: 'Failed to fetch owner document' });
+  }
+});
+
+app.delete('/api/owner-documents/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Owner document not found' });
+    }
+
+    dbRun('DELETE FROM owner_documents WHERE id = :id', { id });
+    persistDatabase();
+
+    io.emit('documentDeleted', {
+      id,
+      documentId: id,
+      ownerId: existing.ownerId,
+      sessionId: existing.sessionId,
+    });
+
+    res.json({ success: true, id });
+  } catch (error) {
+    console.error('Error deleting owner document:', error);
+    res.status(500).json({ error: 'Failed to delete owner document' });
+  }
+});
+
+app.put('/api/owner-documents/:id/session-started', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { sessionId, notaryName, notaryUserId } = req.body || {};
+
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId is required' });
+    }
+
+    dbRun(
+      `
+      UPDATE owner_documents
+      SET status = :status,
+          sessionId = :sessionId,
+          inProcess = :inProcess,
+          notarized = :notarized,
+          notaryReview = :notaryReview,
+          notaryName = :notaryName,
+          notaryId = :notaryId
+      WHERE id = :id
+    `,
+      {
+        id,
+        status: 'session_started',
+        sessionId,
+        inProcess: 1,
+        notarized: 0,
+        notaryReview: 'accepted',
+        notaryName: notaryName || 'Unknown Notary',
+        notaryId: notaryUserId || null,
+      }
+    );
+    persistDatabase();
+
+    const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+    if (!document) {
+      return res.status(404).json({ error: 'Owner document not found' });
+    }
+
+    io.emit('notarySessionStarted', {
+      documentId: document.id,
+      sessionId: document.sessionId,
+      notaryName: document.notaryName || notaryName || 'Unknown Notary',
+      notaryUserId: document.notaryId || notaryUserId || null,
+      timestamp: new Date().toISOString(),
+    });
+
+    res.json(document);
+  } catch (error) {
+    console.error('Error marking owner document session started:', error);
+    res.status(500).json({ error: 'Failed to mark session started' });
   }
 });
 
@@ -1244,16 +1429,18 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     userSessions.set(socket.id, { roomId, role, userId, username });
 
-    // Persist session in MongoDB
-    void upsertSessionParticipant({
-      sessionId: roomId,
-      socketId: socket.id,
-      userId,
-      username,
-      role,
-    }).catch((err) => {
+    // Persist session participant in SQLite.
+    try {
+      upsertSessionParticipant({
+        sessionId: roomId,
+        socketId: socket.id,
+        userId,
+        username,
+        role,
+      });
+    } catch (err) {
       console.warn(`⚠️ Failed to persist session participant for ${roomId}:`, err.message || err);
-    });
+    }
 
     // Create session if doesn't exist
     if (!sessions.has(roomId)) {
@@ -1420,39 +1607,15 @@ io.on('connection', (socket) => {
   });
 });
 
-async function findAvailablePort(start) {
-  let port = start;
-  const maxAttempts = 5;
-  for (let i = 0; i < maxAttempts; i += 1) {
-    const inUse = await new Promise((resolve) => {
-      const tester = net.createServer()
-        .once('error', () => resolve(true))
-        .once('listening', () => {
-          tester.close(() => resolve(false));
-        })
-        .listen(port);
-    });
-
-    if (!inUse) return port;
-    port += 1;
-  }
-  return start;
-}
-
 async function startServer() {
   try {
     await initDatabase();
 
-    const availablePort = await findAvailablePort(PORT);
-    if (availablePort !== PORT) {
-      console.warn(`Port ${PORT} is in use; switching to ${availablePort}.`);
-    }
-
-    server.listen(availablePort, () => {
+    server.listen(PORT, () => {
       console.log(`
 ╔════════════════════════════════════════════════════╗
 ║  🔏 Notarization Platform - Server                 ║
-║  Server running on: http://localhost:${availablePort}        ║
+║  Server running on: http://localhost:${PORT}        ║
 ║  Environment: ${NODE_ENV}                           ║
 ║  Frontend: ${FRONTEND_URL}                      ║
 ╚════════════════════════════════════════════════════╝
@@ -1462,7 +1625,7 @@ async function startServer() {
     server.on('error', (err) => {
       console.error('Server error:', err);
       if (err.code === 'EADDRINUSE') {
-        console.error(`Port ${availablePort} is already in use. Stop the running server or set PORT to a different value.`);
+        console.error(`Port ${PORT} is already in use. Stop the running server or set PORT to a different value.`);
       }
       process.exit(1);
     });
@@ -1482,3 +1645,11 @@ async function startServer() {
 }
 
 startServer();
+
+// Keep oversized payload errors explicit for client-side handling.
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.too.large' || err.name === 'PayloadTooLargeError')) {
+    return res.status(413).json({ error: 'Uploaded payload is too large. Maximum size is 50MB.' });
+  }
+  return next(err);
+});

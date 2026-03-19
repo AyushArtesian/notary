@@ -6,7 +6,7 @@ import CanvasBoard from "../components/CanvasBoard";
 import ScreenRecorder from "../components/ScreenRecorder";
 import socket from "../socket/socket";
 import { createDocumentDragAsset } from "../utils/documentAsset";
-import { completeOwnerDocumentNotarization } from "../utils/apiClient";
+import { completeOwnerDocumentNotarization, fetchOwnerDocuments, markOwnerDocumentSessionStarted } from "../utils/apiClient";
 
 const EDITOR_WIDTH = 900;
 const EDITOR_HEIGHT = 1300;
@@ -131,6 +131,76 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         }
       })();
 
+      const onElementAdded = (element) => {
+        console.log("✏️ [NOTARY] Owner added element:", element);
+        setElements((prev) => [...prev, element]);
+      };
+
+      const onElementUpdated = (updatedElement) => {
+        console.log("🔄 [NOTARY] Owner updated element:", updatedElement.id);
+        setElements((prev) =>
+          prev.map((el) => (el.id === updatedElement.id ? updatedElement : el))
+        );
+      };
+
+      const onElementRemoved = (elementId) => {
+        console.log("🗑️ [NOTARY] Owner removed element:", elementId);
+        setElements((prev) => prev.filter((el) => el.id !== elementId));
+      };
+
+      const onUsersConnected = (users) => {
+        console.log("👥 [NOTARY] Users connected:", users);
+        setConnectedUsers(users);
+        const owner = users.find((u) => u.role === 'owner');
+        setOwnerConnected(!!owner);
+      };
+
+      const onSessionStatus = (status) => {
+        console.log("📊 [NOTARY] Session status:", status);
+        setSessionStatus(status);
+        setOwnerConnected(Boolean(status?.ownerConnected));
+        if (Array.isArray(status?.allUsers)) {
+          setConnectedUsers(status.allUsers);
+        }
+      };
+
+      const onDocumentUploaded = (docInfo) => {
+        console.log("📄 [NOTARY] Document uploaded:", docInfo);
+        setDocumentInfo(docInfo);
+      };
+
+      const onDocumentShared = (data) => {
+        console.log("📄 [NOTARY] Document shared by owner:", data.fileName);
+        setPdfDataUrl(data.pdfDataUrl);
+        setDocumentInfo({ fileName: data.fileName });
+      };
+
+      const onOwnerLeftSession = (data) => {
+        console.log("👤 [NOTARY] Owner left session:", data.sessionId);
+        if (data.sessionId === sessionId) {
+          setSessionJoined(false);
+          setSessionId(null);
+          setInputSessionId("");
+          setElements([]);
+          setUploadedAssets([]);
+          setUploadedAsset(null);
+          setPdfDataUrl(null);
+          setDocumentInfo(null);
+          setOwnerConnected(false);
+          setConnectedUsers([]);
+        }
+      };
+
+      // Register listeners BEFORE joining to avoid missing initial presence events.
+      socket.on("elementAdded", onElementAdded);
+      socket.on("elementUpdated", onElementUpdated);
+      socket.on("elementRemoved", onElementRemoved);
+      socket.on("usersConnected", onUsersConnected);
+      socket.on("sessionStatus", onSessionStatus);
+      socket.on("documentUploaded", onDocumentUploaded);
+      socket.on("documentShared", onDocumentShared);
+      socket.on("ownerLeftSession", onOwnerLeftSession);
+
       console.log('📡 [NOTARY] Joining session:', {roomId: sessionId, role: 'notary', userId: authUser.userId});
       socket.emit("joinSession", {
         roomId: sessionId,
@@ -142,11 +212,24 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       // Check if this is a fresh session start (sessionStarted=true in URL)
       const params = new URLSearchParams(window.location.search);
       const wasJustStarted = params.get('sessionStarted') === 'true';
-      const documentId = params.get('documentId') || sessionId;
+      const documentId = params.get('documentId') || null;
       setDocumentId(documentId);
 
       if (wasJustStarted) {
         console.log('🔔 [NOTARY] Fresh session start detected - will emit notarySessionStarted');
+
+        if (documentId) {
+          markOwnerDocumentSessionStarted(
+            documentId,
+            sessionId,
+            authUser.username || 'Notary',
+            authUser.userId
+          ).catch((error) => {
+            console.warn('⚠️ [NOTARY] Failed to persist session_started via API:', error?.message || error);
+          });
+        } else {
+          console.warn('⚠️ [NOTARY] Missing documentId in URL; cannot persist session_started state');
+        }
         
         // Emit immediately if socket is connected, otherwise wait with retry
         const attemptEmit = (attempt = 0) => {
@@ -176,75 +259,15 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         attemptEmit();
       }
 
-      // Listen for element updates from owner
-      socket.on("elementAdded", (element) => {
-        console.log("✏️ [NOTARY] Owner added element:", element);
-        setElements((prev) => [...prev, element]);
-      });
-
-      socket.on("elementUpdated", (updatedElement) => {
-        console.log("🔄 [NOTARY] Owner updated element:", updatedElement.id);
-        setElements((prev) =>
-          prev.map((el) => (el.id === updatedElement.id ? updatedElement : el))
-        );
-      });
-
-      socket.on("elementRemoved", (elementId) => {
-        console.log("🗑️ [NOTARY] Owner removed element:", elementId);
-        setElements((prev) => prev.filter((el) => el.id !== elementId));
-      });
-
-      socket.on("usersConnected", (users) => {
-        console.log("👥 [NOTARY] Users connected:", users);
-        setConnectedUsers(users);
-        // Check if owner is in the connected users
-        const owner = users.find(u => u.role === 'owner');
-        setOwnerConnected(!!owner);
-      });
-
-      socket.on("sessionStatus", (status) => {
-        console.log("📊 [NOTARY] Session status:", status);
-        setSessionStatus(status);
-        setOwnerConnected(status.ownerConnected);
-      });
-
-      socket.on("documentUploaded", (docInfo) => {
-        console.log("📄 [NOTARY] Document uploaded:", docInfo);
-        setDocumentInfo(docInfo);
-      });
-
-      socket.on("documentShared", (data) => {
-        console.log("📄 [NOTARY] Document shared by owner:", data.fileName);
-        setPdfDataUrl(data.pdfDataUrl);
-        setDocumentInfo({ fileName: data.fileName });
-      });
-
-      socket.on("ownerLeftSession", (data) => {
-        console.log("👤 [NOTARY] Owner left session:", data.sessionId);
-        if (data.sessionId === sessionId) {
-          // Owner left this session, clean up and redirect
-          setSessionJoined(false);
-          setSessionId(null);
-          setInputSessionId("");
-          setElements([]);
-          setUploadedAssets([]);
-          setUploadedAsset(null);
-          setPdfDataUrl(null);
-          setDocumentInfo(null);
-          setOwnerConnected(false);
-          setConnectedUsers([]);
-        }
-      });
-
       return () => {
-        socket.off("elementAdded");
-        socket.off("elementUpdated");
-        socket.off("elementRemoved");
-        socket.off("usersConnected");
-        socket.off("documentUploaded");
-        socket.off("documentShared");
-        socket.off("sessionStatus");
-        socket.off("ownerLeftSession");
+        socket.off("elementAdded", onElementAdded);
+        socket.off("elementUpdated", onElementUpdated);
+        socket.off("elementRemoved", onElementRemoved);
+        socket.off("usersConnected", onUsersConnected);
+        socket.off("documentUploaded", onDocumentUploaded);
+        socket.off("documentShared", onDocumentShared);
+        socket.off("sessionStatus", onSessionStatus);
+        socket.off("ownerLeftSession", onOwnerLeftSession);
       };
     }
   }, [sessionJoined, sessionId]);
@@ -298,7 +321,39 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
   };
 
   const handleMarkNotarized = async () => {
-    if (!documentId) return;
+    let targetDocumentId = documentId;
+
+    if (!targetDocumentId && sessionId) {
+      try {
+        const docs = await fetchOwnerDocuments({ sessionId });
+        const currentFileName = String(documentInfo?.fileName || '').trim().toLowerCase();
+
+        const preferredDoc =
+          docs.find((d) => String(d.name || '').trim().toLowerCase() === currentFileName && d.status === 'session_started') ||
+          docs.find((d) => String(d.name || '').trim().toLowerCase() === currentFileName && d.status === 'accepted') ||
+          docs.find((d) => String(d.name || '').trim().toLowerCase() === currentFileName) ||
+          docs.find((d) => d.status === 'session_started') ||
+          docs.find((d) => d.status === 'accepted') ||
+          docs[0];
+
+        targetDocumentId = preferredDoc?.id || null;
+        if (targetDocumentId) {
+          setDocumentId(targetDocumentId);
+          console.log('ℹ️ [NOTARY] Resolved documentId from session:', targetDocumentId);
+        }
+      } catch (resolveError) {
+        console.warn('⚠️ [NOTARY] Failed to resolve document by session:', resolveError);
+      }
+    }
+
+    if (!targetDocumentId) {
+      alert('Unable to resolve the session document. Refresh this page, then try Mark Notarized again.');
+      console.warn('⚠️ [NOTARY] Mark notarized aborted: no target document id', {
+        sessionId,
+        documentInfo,
+      });
+      return;
+    }
 
     const authUser = (() => {
       try {
@@ -309,8 +364,8 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     })();
 
     try {
-      await completeOwnerDocumentNotarization(documentId, authUser.username || 'Notary');
-      console.log('✅ Notarization marked complete for', documentId);
+      await completeOwnerDocumentNotarization(targetDocumentId, authUser.username || 'Notary');
+      console.log('✅ Notarization marked complete for', targetDocumentId);
     } catch (error) {
       console.error('❌ Failed to mark document notarized:', error);
     }
@@ -526,7 +581,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
               </span>
               <button
                 onClick={handleMarkNotarized}
-                disabled={!documentId || !ownerConnected}
+                disabled={!ownerConnected}
                 style={{
                   padding: "6px 10px",
                   backgroundColor: ownerConnected ? "#2563eb" : "#9ca3af",

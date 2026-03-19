@@ -6,6 +6,7 @@ import OwnerSessionPage from './pages/OwnerSessionPage'
 import NotaryPage from './pages/NotaryPage'
 import NotaryDocDashboardPage from './pages/NotaryDocDashboardPage'
 import AdminPage from './pages/AdminPage'
+import HomePage from './pages/HomePage'
 import AuthPage from './pages/AuthPage'
 import AdminLoginPage from './pages/AdminLoginPage'
 import RegisterPage from './pages/RegisterPage'
@@ -102,8 +103,6 @@ function RequireRole({ children, allowedRoles = [] }) {
 
 function App() {
   const authenticated = isUserAuthenticated()
-  const authUser = getAuthUser()
-  const defaultRoute = getDefaultRouteByRole(authUser?.role)
 
   return (
     <div className="app">
@@ -123,13 +122,7 @@ function App() {
           />
           <Route
             path="/"
-            element={
-              authenticated && defaultRoute ? (
-                <Navigate to={defaultRoute} replace />
-              ) : (
-                <Navigate to="/login" replace />
-              )
-            }
+            element={<HomePage />}
           />
           <Route
             path="/owner/session"

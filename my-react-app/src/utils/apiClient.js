@@ -5,6 +5,7 @@ const configuredApiBaseUrl =
   import.meta.env.VITE_API_BASE_URL;
 
 const isDev = Boolean(import.meta.env.DEV);
+const API_BASE_STORAGE_KEY = 'notary.apiBaseUrl';
 const API_BASE_CANDIDATES = [
   configuredApiBaseUrl,
   ...(isDev
@@ -12,7 +13,9 @@ const API_BASE_CANDIDATES = [
     : []),
 ].filter(Boolean);
 
-let lastWorkingApiBaseUrl = API_BASE_CANDIDATES[0];
+let lastWorkingApiBaseUrl =
+  (typeof window !== 'undefined' && window.localStorage.getItem(API_BASE_STORAGE_KEY)) ||
+  API_BASE_CANDIDATES[0];
 
 const getBaseUrlPriority = () => {
   const ordered = [lastWorkingApiBaseUrl, ...API_BASE_CANDIDATES];
@@ -26,6 +29,9 @@ async function fetchWithFallback(path, options = {}) {
     try {
       const response = await fetch(`${baseUrl}${path}`, options);
       lastWorkingApiBaseUrl = baseUrl;
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(API_BASE_STORAGE_KEY, baseUrl);
+      }
       return response;
     } catch (error) {
       networkError = error;
@@ -169,6 +175,77 @@ async function deleteSignature(signatureId) {
   }
 }
 
+async function saveAsset(assetData) {
+  try {
+    const url = '/api/assets';
+    console.log('[saveAsset] Sending asset:', { id: assetData.id, name: assetData.name, type: assetData.type });
+
+    const response = await fetchWithFallback(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(assetData),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    console.log('[saveAsset] ✅ Saved:', responseData.id);
+    return responseData;
+  } catch (error) {
+    console.error('[saveAsset] ❌ Error:', error);
+    throw error;
+  }
+}
+
+async function fetchAssets(userRole, { sessionId, userId } = {}) {
+  try {
+    const params = new URLSearchParams();
+    if (sessionId) params.append('sessionId', sessionId);
+    if (userId) params.append('userId', userId);
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const url = `/api/assets/${userRole}${query}`;
+    console.log('[fetchAssets] Fetching from:', url);
+
+    const response = await fetchWithFallback(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: Failed to fetch assets`);
+    }
+
+    const responseData = await response.json();
+    console.log('[fetchAssets] ✅ Got', responseData.length, 'assets');
+    return responseData;
+  } catch (error) {
+    console.error('[fetchAssets] ❌ Error:', error);
+    return [];
+  }
+}
+
+async function deleteAsset(assetId) {
+  try {
+    const url = `/api/assets/${assetId}`;
+    console.log('[deleteAsset] Deleting:', assetId);
+
+    const response = await fetchWithFallback(url, { method: 'DELETE' });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    console.log('[deleteAsset] ✅ Deleted');
+    return responseData;
+  } catch (error) {
+    console.error('[deleteAsset] ❌ Error:', error);
+    throw error;
+  }
+}
+
 async function saveDocument(documentData) {
   try {
     const url = '/api/documents';
@@ -248,10 +325,11 @@ async function fetchDocuments({ sessionId, ownerId } = {}) {
   }
 }
 
-async function fetchOwnerDocuments({ ownerId, inProcess, notarized } = {}) {
+async function fetchOwnerDocuments({ ownerId, sessionId, inProcess, notarized } = {}) {
   try {
     const params = new URLSearchParams();
     if (ownerId) params.append('ownerId', ownerId);
+    if (sessionId) params.append('sessionId', sessionId);
     if (inProcess !== undefined) params.append('inProcess', inProcess ? '1' : '0');
     if (notarized !== undefined) params.append('notarized', notarized ? '1' : '0');
 
@@ -353,6 +431,56 @@ async function updateOwnerDocumentReview(documentId, notaryReview, notaryName) {
   }
 }
 
+async function deleteOwnerDocument(documentId) {
+  try {
+    const url = `/api/owner-documents/${documentId}`;
+    console.log('[deleteOwnerDocument] Deleting:', documentId);
+
+    const response = await fetchWithFallback(url, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    console.log('[deleteOwnerDocument] ✅ Deleted');
+    return responseData;
+  } catch (error) {
+    console.error('[deleteOwnerDocument] ❌ Error:', error);
+    throw error;
+  }
+}
+
+async function markOwnerDocumentSessionStarted(documentId, sessionId, notaryName, notaryUserId) {
+  try {
+    const url = `/api/owner-documents/${documentId}/session-started`;
+    console.log('[markOwnerDocumentSessionStarted] Updating:', documentId, sessionId);
+
+    const response = await fetchWithFallback(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ sessionId, notaryName, notaryUserId }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    console.log('[markOwnerDocumentSessionStarted] ✅ Updated');
+    return responseData;
+  } catch (error) {
+    console.error('[markOwnerDocumentSessionStarted] ❌ Error:', error);
+    throw error;
+  }
+}
+
 async function completeOwnerDocumentNotarization(documentId, notaryName) {
   try {
     const url = `/api/owner-documents/${documentId}/notarize`;
@@ -380,4 +508,4 @@ async function completeOwnerDocumentNotarization(documentId, notaryName) {
   }
 }
 
-export { saveSignature, fetchSignatures, deleteSignature, registerUser, loginUser, fetchUsers, saveDocument, saveOwnerDocument, fetchDocuments, fetchOwnerDocuments, fetchNotarizedDocuments, updateDocumentReview, updateOwnerDocumentReview, completeOwnerDocumentNotarization, API_BASE_URL };
+export { saveSignature, fetchSignatures, deleteSignature, saveAsset, fetchAssets, deleteAsset, registerUser, loginUser, fetchUsers, saveDocument, saveOwnerDocument, fetchDocuments, fetchOwnerDocuments, fetchNotarizedDocuments, updateDocumentReview, updateOwnerDocumentReview, deleteOwnerDocument, markOwnerDocumentSessionStarted, completeOwnerDocumentNotarization, API_BASE_URL };
