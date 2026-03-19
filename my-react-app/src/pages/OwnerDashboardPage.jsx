@@ -1544,6 +1544,40 @@ const OwnerDashboardPage = () => {
               <p style={{ margin: "6px 0 0 0", fontSize: "13px", color: "#888" }}>
                 Manage and track all your notarization documents
               </p>
+              <div style={{ marginTop: "12px", padding: "12px", background: "#f3f4f6", borderRadius: "12px", border: "1px solid #e5e7eb", display: "flex", alignItems: "flex-start", gap: "14px", flexWrap: "wrap" }}>
+                <div style={{ minWidth: "220px" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                    You
+                  </div>
+                  <div style={{ marginTop: "6px", fontSize: "13px", color: "#1f2937" }}>
+                    <div style={{ fontWeight: 600 }}>{authUser?.username || "Unknown"}</div>
+                    <div style={{ fontSize: "12px", color: "#64748b" }}>
+                      {authUser?.role ? authUser.role.toUpperCase() : "OWNER"} • ID: {authUser?.userId || "—"}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ minWidth: "220px" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                    Connected Notaries
+                  </div>
+                  <div style={{ marginTop: "6px", fontSize: "13px", color: "#1f2937" }}>
+                    {notaries.length === 0 ? (
+                      <span style={{ color: "#64748b" }}>No notaries connected</span>
+                    ) : (
+                      <ul style={{ margin: 0, padding: "0 0 0 18px" }}>
+                        {notaries.slice(0, 3).map((n) => (
+                          <li key={n.socketId} style={{ marginBottom: "4px" }}>
+                            {n.username || n.userId}
+                          </li>
+                        ))}
+                        {notaries.length > 3 && (
+                          <li style={{ color: "#64748b" }}>+ {notaries.length - 3} more</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
               {sessionId && (
                 <div style={{ marginTop: "10px", display: "flex", alignItems: "center", gap: "10px" }}>
                   <span style={{ fontSize: "12px", color: "#555" }}>

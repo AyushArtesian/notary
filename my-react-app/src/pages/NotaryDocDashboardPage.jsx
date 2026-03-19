@@ -38,6 +38,14 @@ const NotaryDocDashboardPage = () => {
   const [docs, setDocs] = useState([])
   const [loading, setLoading] = useState(true)
 
+  const authUser = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('notary.authUser') || 'null') || {}
+    } catch {
+      return {}
+    }
+  })()
+
   const getWorkflowStatus = (doc) => {
     const rawStatus = String(doc?.status || '').trim().toLowerCase()
     const review = String(doc?.notaryReview || '').trim().toLowerCase()
@@ -191,13 +199,57 @@ const NotaryDocDashboardPage = () => {
     }
   }
 
+  const ownerUsers = useMemo(() => {
+    const ownerMap = new Map();
+    docs.forEach((doc) => {
+      if (doc.ownerId) {
+        ownerMap.set(doc.ownerId, { ownerId: doc.ownerId, ownerName: doc.ownerName });
+      }
+    });
+    return Array.from(ownerMap.values());
+  }, [docs]);
+
   return (
     <div style={{ minHeight: '100vh', background: '#f4f6fb', padding: '36px 20px', fontFamily: "'Segoe UI', sans-serif" }}>
       <div style={{ maxWidth: '980px', margin: '0 auto' }}>
         <h1 style={{ margin: 0, color: '#0f172a', fontSize: '30px', fontWeight: 700 }}>Notary Document Dashboard</h1>
-        <p style={{ margin: '8px 0 24px 0', color: '#475569' }}>
+        <p style={{ margin: '8px 0 16px 0', color: '#475569' }}>
           Review documents marked for notarization by owners.
         </p>
+        <div style={{ marginBottom: '24px', padding: '16px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', display: 'flex', flexWrap: 'wrap', gap: '16px' }}>
+          <div style={{ minWidth: '220px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              You
+            </div>
+            <div style={{ marginTop: '6px', fontSize: '13px', color: '#1f2937' }}>
+              <div style={{ fontWeight: 600 }}>{authUser?.username || 'Notary'}</div>
+              <div style={{ fontSize: '12px', color: '#64748b' }}>
+                {authUser?.role ? authUser.role.toUpperCase() : 'NOTARY'} • ID: {authUser?.userId || '—'}
+              </div>
+            </div>
+          </div>
+          <div style={{ minWidth: '220px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              Owners in queue
+            </div>
+            <div style={{ marginTop: '6px', fontSize: '13px', color: '#1f2937' }}>
+              {ownerUsers.length === 0 ? (
+                <span style={{ color: '#64748b' }}>No owners yet</span>
+              ) : (
+                <ul style={{ margin: 0, padding: '0 0 0 18px' }}>
+                  {ownerUsers.slice(0, 3).map((o) => (
+                    <li key={o.ownerId} style={{ marginBottom: '4px' }}>
+                      {o.ownerName || 'Unknown'}
+                    </li>
+                  ))}
+                  {ownerUsers.length > 3 && (
+                    <li style={{ color: '#64748b' }}>+ {ownerUsers.length - 3} more</li>
+                  )}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
 
         <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
           <div

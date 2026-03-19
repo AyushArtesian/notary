@@ -61,9 +61,24 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
   const [uploadedAssets, setUploadedAssets] = useState([]);
   const [uploadedAsset, setUploadedAsset] = useState(null);
   const [isAssetBoxMode, setIsAssetBoxMode] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
+  const [toastType, setToastType] = useState("info");
+  const toastTimerRef = useRef(null);
   const editorScrollRef = useRef(null);
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
+
+  const showToast = (message, type = "info", duration = 2600) => {
+    setToastMessage(message);
+    setToastType(type);
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastMessage("");
+      toastTimerRef.current = null;
+    }, duration);
+  };
 
   // Auto-fill from URL param even if not passed as prop (direct URL open)
   const urlSessionId = normalizeSessionId(new URLSearchParams(window.location.search).get("sessionId"));
@@ -361,6 +376,8 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
   };
 
   const handleMarkNotarized = async () => {
+    showToast('Notarization started…', 'info');
+
     let targetDocumentId = documentId;
 
     if (!targetDocumentId && sessionId) {
@@ -368,7 +385,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     }
 
     if (!targetDocumentId) {
-      alert('Unable to resolve the session document. Refresh this page, then try Mark Notarized again.');
+      showToast('Unable to resolve the session document. Please refresh and try again.', 'error');
       console.warn('⚠️ [NOTARY] Mark notarized aborted: no target document id', {
         sessionId,
         documentInfo,
@@ -398,7 +415,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     }
 
     if (!notarizedDataUrl) {
-      alert('Unable to generate notarized PDF. Please try again or refresh the page.');
+      showToast('Unable to generate notarized PDF. Please try again.', 'error');
       console.warn('⚠️ Notarization aborted: no notarized PDF available', { elements, pdfDataUrl });
       return;
     }
@@ -410,8 +427,10 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         notarizedDataUrl
       );
       console.log('✅ Notarization marked complete for', targetDocumentId);
+      showToast('✅ Document notarized successfully!', 'success');
     } catch (error) {
       console.error('❌ Failed to mark document notarized:', error);
+      showToast('Failed to mark document notarized. Please try again.', 'error');
     }
   };
 
@@ -604,7 +623,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       />
 
       {/* Main Content */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "15px", overflowY: "auto" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "15px", overflowY: "auto", position: "relative" }}>
         {/* Header */}
         <div style={{ marginBottom: "15px", backgroundColor: "#f3e5f5", padding: "15px", borderRadius: "5px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
@@ -761,6 +780,33 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
             </div>
           )}
         </div>
+
+        {/* Toast */}
+        {toastMessage && (
+          <div
+            style={{
+              position: "fixed",
+              bottom: "20px",
+              right: "20px",
+              minWidth: "260px",
+              padding: "16px 18px",
+              borderRadius: "12px",
+              boxShadow: "0 12px 26px rgba(0,0,0,0.16)",
+              backgroundColor: toastType === "success" ? "#22c55e" : toastType === "error" ? "#ef4444" : "#2563eb",
+              color: "white",
+              fontWeight: 600,
+              zIndex: 110,
+              display: "flex",
+              alignItems: "center",
+              gap: "10px",
+            }}
+          >
+            <span style={{ fontSize: "18px" }}>
+              {toastType === "success" ? "✅" : toastType === "error" ? "⚠️" : "ℹ️"}
+            </span>
+            <span style={{ flex: 1, fontSize: "13px" }}>{toastMessage}</span>
+          </div>
+        )}
       </div>
     </div>
   );
