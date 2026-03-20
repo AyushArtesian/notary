@@ -323,6 +323,337 @@
   color: #e65100;
 }
 
+.kba-status-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.kba-status-draft {
+  background-color: #f3f4f6;
+  color: #6b7280;
+}
+
+.kba-status-otp-pending {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.kba-status-otp-verified {
+  background-color: #dbeafe;
+  color: #0c4a6e;
+}
+
+.kba-status-kba-pending-review {
+  background-color: #fcd34d;
+  color: #78350f;
+}
+
+.kba-status-kba-approved {
+  background-color: #dcfce7;
+  color: #166534;
+}
+
+.kba-status-kba-rejected {
+  background-color: #fecaca;
+  color: #991b1b;
+}
+
+.admin-kba-modal-landscape {
+  max-width: 90vw;
+  width: 1400px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.admin-kba-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.admin-kba-modal-header h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: #2d2f39;
+}
+
+.admin-kba-modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #999;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s ease;
+}
+
+.admin-kba-modal-close:hover {
+  color: #333;
+}
+
+.admin-kba-modal-content {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.admin-kba-left-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  padding-right: 12px;
+}
+
+.admin-kba-right-panel {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding-left: 12px;
+  border-left: 1px solid #e2e8f0;
+}
+
+.admin-kba-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid #e2e8f0;
+  flex-shrink: 0;
+  background-color: #f9f9f9;
+}
+
+.admin-kba-loading {
+  padding: 24px;
+  text-align: center;
+  color: #667eea;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.admin-kba-error {
+  padding: 16px;
+  background-color: #fef2f2;
+  color: #c13e4f;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.admin-kba-actions {
+  margin: 0;
+  padding: 12px;
+  background-color: #f9f9f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.admin-kba-actions label {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+  color: #3b3f51;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.admin-kba-actions textarea {
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-size: 13px;
+  color: #555a6d;
+  resize: vertical;
+}
+
+.admin-kba-actions textarea:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.admin-kba-document-section {
+  margin: 0;
+  padding: 12px;
+  background-color: #f9f9f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.admin-kba-document-section h4 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #3b3f51;
+  flex-shrink: 0;
+}
+
+.admin-kba-image-preview {
+  margin-bottom: 12px;
+  text-align: center;
+  flex: 1;
+  overflow: auto;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 8px;
+  background-color: #fafafa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-kba-image-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 4px;
+}
+
+.admin-kba-pdf-preview {
+  margin-bottom: 12px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  overflow: hidden;
+  flex: 1;
+  min-height: 300px;
+}
+
+.admin-kba-pdf-preview iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.admin-kba-file-info {
+  margin-bottom: 12px;
+  padding: 12px;
+  background-color: #fff;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+}
+
+.admin-kba-file-info p {
+  margin: 4px 0;
+  font-size: 13px;
+  color: #555a6d;
+}
+
+.admin-kba-download-link {
+  display: inline-block;
+  padding: 8px 12px;
+  background-color: #667eea;
+  color: white;
+  text-decoration: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background-color 0.2s ease;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.admin-kba-download-link:hover {
+  background-color: #5568d3;
+}
+
+.admin-kba-file-info {
+  margin-bottom: 12px;
+  padding: 12px;
+  background-color: #fff;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+}
+
+.admin-kba-file-info p {
+  margin: 4px 0;
+  font-size: 13px;
+  color: #555a6d;
+}
+
+.admin-kba-download-link {
+  display: inline-block;
+  padding: 8px 16px;
+  background-color: #667eea;
+  color: white;
+  text-decoration: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background-color 0.2s ease;
+  margin-bottom: 16px;
+}
+
+.admin-kba-download-link:hover {
+  background-color: #5568d3;
+}
+
+.admin-kba-modal-footer button {
+  padding: 8px 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.admin-kba-modal-footer button:hover {
+  background-color: #f0f0f0;
+  border-color: #9ca3af;
+}
+
+.admin-kba-modal-footer button.cancel {
+  background-color: #ffffff;
+  color: #555a6d;
+}
+
+.admin-kba-modal-footer button.primary {
+  background-color: #667eea;
+  color: white;
+  border-color: #667eea;
+}
+
+.admin-kba-modal-footer button.primary:hover {
+  background-color: #5568d3;
+  border-color: #5568d3;
+}
+
+.admin-kba-modal-footer button.danger {
+  background-color: #fee2e2;
+  color: #c13e4f;
+  border-color: #fecaca;
+}
+
+.admin-kba-modal-footer button.danger:hover {
+  background-color: #fecaca;
+}
+
 @media (max-width: 768px) {
   .admin-page {
     padding: 16px;

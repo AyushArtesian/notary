@@ -127,6 +127,7 @@ const OwnerPage = () => {
       role: "owner",
       userId: authUser.userId || socket.id,
       username: authUser.username || "Owner",
+      token: authUser.token,
     });
 
     // Listen for element updates from notary

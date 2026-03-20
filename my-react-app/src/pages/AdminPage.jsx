@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { deleteAdminUser, fetchAdminOverview, fetchAdminUserInfo, terminateAdminSession, updateAdminUser } from "../utils/apiClient";
+import { deleteAdminUser, fetchAdminOverview, fetchAdminUserInfo, terminateAdminSession, updateAdminUser, fetchPendingKbaQueue, approveKbaSubmission, rejectKbaSubmission, getKbaDocumentUrl, fetchKbaDocumentAsBlob } from "../utils/apiClient";
 import "./AdminPage.css";
 
 const AdminPage = () => {
@@ -7,6 +7,7 @@ const AdminPage = () => {
   const [users, setUsers] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [activeSessions, setActiveSessions] = useState([]);
+  const [kbaQueue, setKbaQueue] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -17,6 +18,11 @@ const AdminPage = () => {
   const [busyUserId, setBusyUserId] = useState("");
   const [busySessionId, setBusySessionId] = useState("");
   const [selectedUser, setSelectedUser] = useState(null);
+  const [selectedKbaSubmission, setSelectedKbaSubmission] = useState(null);
+  const [kbaDocumentUrl, setKbaDocumentUrl] = useState("");
+  const [kbaDocumentLoading, setKbaDocumentLoading] = useState(false);
+  const [kbaDocumentError, setKbaDocumentError] = useState("");
+  const [kbaRejectReason, setKbaRejectReason] = useState("");
   const [editUserForm, setEditUserForm] = useState({ username: "", email: "", role: "owner", password: "" });
 
   const authUser = (() => {
@@ -55,6 +61,15 @@ const AdminPage = () => {
       setUsers(Array.isArray(overview.users) ? overview.users : []);
       setDocuments(Array.isArray(overview.recentDocuments) ? overview.recentDocuments : []);
       setActiveSessions(Array.isArray(overview.activeSessions) ? overview.activeSessions : []);
+      
+      try {
+        const kbaData = await fetchPendingKbaQueue();
+        setKbaQueue(Array.isArray(kbaData) ? kbaData : []);
+      } catch (err) {
+        console.error('Failed to load KBA queue:', err);
+        setKbaQueue([]);
+      }
+      
       setError("");
     } catch (err) {
       setError("Failed to load admin dashboard data");
@@ -80,6 +95,51 @@ const AdminPage = () => {
       window.clearInterval(refreshId);
     };
   }, [loadOverview]);
+
+  useEffect(() => {
+    if (!selectedKbaSubmission) {
+      setKbaDocumentUrl("");
+      setKbaDocumentError("");
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadDocumentPreview = async () => {
+      try {
+        console.log('[KBA Document] Loading document for user:', selectedKbaSubmission.userId);
+        setKbaDocumentLoading(true);
+        setKbaDocumentError("");
+        const blob = await fetchKbaDocumentAsBlob(selectedKbaSubmission.userId);
+        console.log('[KBA Document] Received blob:', blob.size, 'bytes');
+        
+        if (isMounted) {
+          const url = URL.createObjectURL(blob);
+          setKbaDocumentUrl(url);
+          console.log('[KBA Document] Document URL created successfully');
+        }
+      } catch (err) {
+        console.error('[KBA Document] Error loading document:', err);
+        if (isMounted) {
+          setKbaDocumentError(err?.message || "Failed to load document preview");
+          setKbaDocumentUrl("");
+        }
+      } finally {
+        if (isMounted) {
+          setKbaDocumentLoading(false);
+        }
+      }
+    };
+
+    loadDocumentPreview();
+
+    return () => {
+      isMounted = false;
+      if (kbaDocumentUrl) {
+        URL.revokeObjectURL(kbaDocumentUrl);
+      }
+    };
+  }, [selectedKbaSubmission?.userId]);
 
   const clearFlashAfterDelay = () => {
     window.setTimeout(() => {
@@ -191,6 +251,50 @@ const AdminPage = () => {
       clearFlashAfterDelay();
     } finally {
       setBusySessionId("");
+    }
+  };
+
+  const handleApproveKba = async (submission) => {
+    const shouldApprove = window.confirm(`Approve KBA submission from ${submission.username}?`);
+    if (!shouldApprove) return;
+
+    try {
+      setBusyUserId(submission.userId);
+      setActionError("");
+      setActionMessage("");
+      await approveKbaSubmission(submission.userId);
+      setActionMessage(`KBA approved for ${submission.username}`);
+      setSelectedKbaSubmission(null);
+      await loadOverview();
+      clearFlashAfterDelay();
+    } catch (err) {
+      setActionError(err?.message || "Failed to approve KBA");
+      clearFlashAfterDelay();
+    } finally {
+      setBusyUserId("");
+    }
+  };
+
+  const handleRejectKba = async (submission) => {
+    const reason = kbaRejectReason.trim() || "KBA documents could not be verified";
+    const shouldReject = window.confirm(`Reject KBA submission from ${submission.username}?\nReason: ${reason}`);
+    if (!shouldReject) return;
+
+    try {
+      setBusyUserId(submission.userId);
+      setActionError("");
+      setActionMessage("");
+      await rejectKbaSubmission(submission.userId, reason);
+      setActionMessage(`KBA rejected for ${submission.username}`);
+      setSelectedKbaSubmission(null);
+      setKbaRejectReason("");
+      await loadOverview();
+      clearFlashAfterDelay();
+    } catch (err) {
+      setActionError(err?.message || "Failed to reject KBA");
+      clearFlashAfterDelay();
+    } finally {
+      setBusyUserId("");
     }
   };
 
@@ -422,6 +526,58 @@ const AdminPage = () => {
               </table>
             </div>
 
+            <h2 className="admin-section-title">KBA Review Queue</h2>
+            <div className="admin-table-wrapper">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Document Type</th>
+                    <th>Status</th>
+                    <th>Submitted</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {kbaQueue.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="admin-empty">No pending KBA submissions.</td>
+                    </tr>
+                  ) : (
+                    kbaQueue.map((submission) => (
+                      <tr key={submission.userId}>
+                        <td>{submission.username}</td>
+                        <td>{submission.email}</td>
+                        <td>
+                          <span className={`role-badge ${statusClassByRole(submission.role)}`}>
+                            {roleLabel(submission.role)}
+                          </span>
+                        </td>
+                        <td>{submission.documentType || '-'}</td>
+                        <td>
+                          <span className={`kba-status-badge kba-status-${(submission.kbaStatus || 'draft').toLowerCase().replace(/_/g, '-')}`}>
+                            {(submission.kbaStatus || 'draft').replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                        <td>{formatDate(submission.submittedAt)}</td>
+                        <td>
+                          <button
+                            className="admin-action-btn"
+                            onClick={() => setSelectedKbaSubmission(submission)}
+                            disabled={busyUserId === submission.userId}
+                          >
+                            Review
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
             <h2 className="admin-section-title">Recent Document Work</h2>
             <div className="admin-table-wrapper">
               <table className="admin-table">
@@ -524,6 +680,122 @@ const AdminPage = () => {
                         {busyUserId === selectedUser.data.user.userId ? "Saving..." : "Save Changes"}
                       </button>
                     )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {selectedKbaSubmission && (
+              <div className="admin-user-modal-overlay" onClick={() => setSelectedKbaSubmission(null)}>
+                <div className="admin-user-modal admin-kba-modal-landscape" onClick={(e) => e.stopPropagation()}>
+                  <div className="admin-kba-modal-header">
+                    <h3>KBA Submission Review</h3>
+                    <button className="admin-kba-modal-close" onClick={() => setSelectedKbaSubmission(null)}>✕</button>
+                  </div>
+
+                  <div className="admin-kba-modal-content">
+                    {/* Left Panel: User Info and Actions */}
+                    <div className="admin-kba-left-panel">
+                      <div className="admin-user-info-list">
+                        <p><strong>User:</strong> {selectedKbaSubmission.username}</p>
+                        <p><strong>Email:</strong> {selectedKbaSubmission.email}</p>
+                        <p><strong>Role:</strong> {roleLabel(selectedKbaSubmission.role)}</p>
+                        <p><strong>Document Type:</strong> {selectedKbaSubmission.documentType || '-'}</p>
+                        <p><strong>File Name:</strong> {selectedKbaSubmission.fileName || '-'}</p>
+                        <p><strong>Current Status:</strong> 
+                          <span className={`kba-status-badge kba-status-${(selectedKbaSubmission.kbaStatus || 'draft').toLowerCase().replace(/_/g, '-')}`}>
+                            {(selectedKbaSubmission.kbaStatus || 'draft').replace(/_/g, ' ')}
+                          </span>
+                        </p>
+                        <p><strong>Submitted:</strong> {formatDate(selectedKbaSubmission.submittedAt)}</p>
+                        {selectedKbaSubmission.rejectionReason && (
+                          <p><strong>Previous Rejection Reason:</strong> {selectedKbaSubmission.rejectionReason}</p>
+                        )}
+                      </div>
+
+                      <div className="admin-kba-actions">
+                        <label>
+                          Rejection Reason (optional)
+                          <textarea
+                            value={kbaRejectReason}
+                            onChange={(e) => setKbaRejectReason(e.target.value)}
+                            placeholder="If rejecting, provide a reason..."
+                            rows={3}
+                            style={{ minHeight: '60px', maxHeight: '100px' }}
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Right Panel: Document Preview */}
+                    <div className="admin-kba-right-panel">
+                      <div className="admin-kba-document-section">
+                        <h4>Uploaded Document</h4>
+                        {kbaDocumentLoading ? (
+                          <div className="admin-kba-loading">Loading document preview...</div>
+                        ) : kbaDocumentError ? (
+                          <div className="admin-kba-error">{kbaDocumentError}</div>
+                        ) : kbaDocumentUrl && selectedKbaSubmission.mimeType ? (
+                          <>
+                            {selectedKbaSubmission.mimeType.startsWith('image/') ? (
+                              <div className="admin-kba-image-preview">
+                                <img 
+                                  src={kbaDocumentUrl} 
+                                  alt="KBA Document" 
+                                />
+                              </div>
+                            ) : selectedKbaSubmission.mimeType === 'application/pdf' ? (
+                              <div className="admin-kba-pdf-preview">
+                                <iframe 
+                                  src={kbaDocumentUrl} 
+                                  title="KBA Document Preview"
+                                />
+                              </div>
+                            ) : (
+                              <div className="admin-kba-file-info">
+                                <p><strong>File Type:</strong> {selectedKbaSubmission.mimeType}</p>
+                                <p><strong>File Name:</strong> {selectedKbaSubmission.fileName}</p>
+                              </div>
+                            )}
+                            <a 
+                              href={kbaDocumentUrl} 
+                              download={selectedKbaSubmission.fileName}
+                              className="admin-kba-download-link"
+                            >
+                              Download Document
+                            </a>
+                          </>
+                        ) : (
+                          <p style={{ color: '#999', fontSize: '14px', textAlign: 'center', padding: '40px 20px' }}>No document available</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <details style={{ marginBottom: '12px', padding: '8px', backgroundColor: '#f5f5f5', borderRadius: '6px', fontSize: '11px' }}>
+                    <summary style={{ cursor: 'pointer', fontWeight: '600', color: '#666' }}>Debug Info (click to expand)</summary>
+                    <div style={{ marginTop: '8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', color: '#333' }}>
+                      User ID: {selectedKbaSubmission.userId}
+                      MIME Type: {selectedKbaSubmission.mimeType}
+                      Loading: {kbaDocumentLoading ? 'YES' : 'NO'} | URL Set: {kbaDocumentUrl ? 'YES' : 'NO'} | Error: {kbaDocumentError || 'None'}
+                    </div>
+                  </details>
+
+                  <div className="admin-kba-modal-footer">
+                    <button
+                      className="admin-action-btn danger"
+                      onClick={() => handleRejectKba(selectedKbaSubmission)}
+                      disabled={busyUserId === selectedKbaSubmission.userId}
+                    >
+                      {busyUserId === selectedKbaSubmission.userId ? "Rejecting..." : "Reject"}
+                    </button>
+                    <button
+                      className="admin-action-btn primary"
+                      onClick={() => handleApproveKba(selectedKbaSubmission)}
+                      disabled={busyUserId === selectedKbaSubmission.userId}
+                    >
+                      {busyUserId === selectedKbaSubmission.userId ? "Approving..." : "Approve"}
+                    </button>
                   </div>
                 </div>
               </div>

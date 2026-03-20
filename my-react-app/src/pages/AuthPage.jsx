@@ -13,6 +13,15 @@ const getDefaultRouteByRole = (role) => {
   return '/'
 }
 
+const getKbaRedirectPath = (user) => {
+  if (!user || !['owner', 'notary'].includes(user.role)) return null
+  const status = String(user.kbaStatus || 'draft').trim().toLowerCase()
+  if (status === 'kba_approved') return null
+  if (status === 'kba_pending_review') return '/kba/pending'
+  if (status === 'kba_rejected') return '/kba/rejected'
+  return '/kba/verify'
+}
+
 const isRoleRouteMatch = (role, path) => {
   if (!path) return false
   if (role === 'owner') return path.startsWith('/owner')
@@ -67,15 +76,20 @@ const AuthPage = () => {
           username: result.user.username,
           email: result.user.email,
           role: result.user.role,
+          otpVerified: Boolean(result.user.otpVerified),
+          kbaStatus: result.user.kbaStatus || 'draft',
+          kbaApprovedAt: result.user.kbaApprovedAt || null,
+          kbaRejectedReason: result.user.kbaRejectedReason || null,
           token: result.token,
           loggedInAt: Date.now(),
           expiresAt: Date.now() + AUTH_SESSION_TTL_MS,
         })
       )
 
-      const defaultRoute = getDefaultRouteByRole(result.user.role)
+      const kbaRoute = getKbaRedirectPath(result.user)
+      const defaultRoute = kbaRoute || getDefaultRouteByRole(result.user.role)
       const destination = isRoleRouteMatch(result.user.role, redirectPath)
-        ? redirectPath
+        ? (kbaRoute || redirectPath)
         : defaultRoute
 
       navigate(destination, { replace: true })
