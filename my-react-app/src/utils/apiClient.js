@@ -685,17 +685,27 @@ async function verifyKbaOtp(otp) {
   return payload;
 }
 
-async function uploadKbaDocument({ documentType, fileName, mimeType, documentDataUrl }) {
+async function uploadKbaDocument(payload) {
+  // Accept entire payload object with documentType, front, and back
+  // payload shape: { documentType, front: { fileName, mimeType, documentDataUrl }, back: { ... } }
+  console.log('[uploadKbaDocument] Sending payload:', {
+    documentType: payload.documentType,
+    frontFileName: payload.front?.fileName,
+    backFileName: payload.back?.fileName,
+    frontDataUrlLength: payload.front?.documentDataUrl?.length || 0,
+    backDataUrlLength: payload.back?.documentDataUrl?.length || 0,
+  });
+  
   const response = await fetchWithFallback('/api/kba/upload', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ documentType, fileName, mimeType, documentDataUrl }),
+    body: JSON.stringify(payload),
   });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || 'Failed to upload KBA document');
-  return payload;
+  const responsePayload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(responsePayload.error || 'Failed to upload KBA document');
+  return responsePayload;
 }
 
 async function fetchKbaStatus() {
@@ -738,18 +748,18 @@ async function rejectKbaSubmission(userId, reason) {
   return payload;
 }
 
-function getKbaDocumentUrl(userId) {
+function getKbaDocumentUrl(userId, side = 'front') {
   const baseUrl = lastWorkingApiBaseUrl || API_BASE_CANDIDATES[0] || '';
   const token = getAuthToken();
-  return `${baseUrl}/api/admin/kba/${userId}/document${token ? `?auth=${encodeURIComponent(token)}` : ''}`;
+  return `${baseUrl}/api/admin/kba/${userId}/document?side=${encodeURIComponent(side)}${token ? `&auth=${encodeURIComponent(token)}` : ''}`;
 }
 
-async function fetchKbaDocumentAsBlob(userId) {
+async function fetchKbaDocumentAsBlob(userId, side = 'front') {
   const token = getAuthToken();
   if (!token) throw new Error('No authentication token found');
   
   const baseUrl = lastWorkingApiBaseUrl || API_BASE_CANDIDATES[0] || '';
-  const url = `${baseUrl}/api/admin/kba/${userId}/document`;
+  const url = `${baseUrl}/api/admin/kba/${userId}/document?side=${encodeURIComponent(side)}`;
   
   console.log('[fetchKbaDocumentAsBlob] Fetching from:', url);
   console.log('[fetchKbaDocumentAsBlob] Token exists:', !!token);

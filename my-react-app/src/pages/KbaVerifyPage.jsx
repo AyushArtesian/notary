@@ -44,7 +44,8 @@ const KbaVerifyPage = () => {
   const [otpChannel, setOtpChannel] = useState('sms')
   const [otpCode, setOtpCode] = useState('')
   const [documentType, setDocumentType] = useState('aadhaar')
-  const [selectedFile, setSelectedFile] = useState(null)
+  const [selectedFrontFile, setSelectedFrontFile] = useState(null)
+  const [selectedBackFile, setSelectedBackFile] = useState(null)
   const [busyAction, setBusyAction] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -139,24 +140,47 @@ const KbaVerifyPage = () => {
     setError('')
     setSuccess('')
 
-    if (!selectedFile) {
-      setError('Please select a KBA document to upload')
+    if (!selectedFrontFile) {
+      setError('Please select the front side of your document')
+      return
+    }
+    if (!selectedBackFile) {
+      setError('Please select the back side of your document')
       return
     }
 
     try {
       setBusyAction('upload-kba')
-      const documentDataUrl = await convertFileToDataUrl(selectedFile)
-      await uploadKbaDocument({
+      
+      console.log('[KBA Upload] Converting front file to data URL...')
+      const documentDataUrlFront = await convertFileToDataUrl(selectedFrontFile)
+      console.log('[KBA Upload] Front file converted, length:', documentDataUrlFront.length)
+      
+      console.log('[KBA Upload] Converting back file to data URL...')
+      const documentDataUrlBack = await convertFileToDataUrl(selectedBackFile)
+      console.log('[KBA Upload] Back file converted, length:', documentDataUrlBack.length)
+
+      const payload = {
         documentType,
-        fileName: selectedFile.name,
-        mimeType: selectedFile.type,
-        documentDataUrl,
-      })
-      setSuccess('KBA document submitted successfully. Waiting for admin review.')
+        front: {
+          fileName: selectedFrontFile.name,
+          mimeType: selectedFrontFile.type || 'application/octet-stream',
+          documentDataUrl: documentDataUrlFront,
+        },
+        back: {
+          fileName: selectedBackFile.name,
+          mimeType: selectedBackFile.type || 'application/octet-stream',
+          documentDataUrl: documentDataUrlBack,
+        },
+      }
+      
+      console.log('[KBA Upload] Sending payload with front:', payload.front.fileName, 'back:', payload.back.fileName)
+      await uploadKbaDocument(payload)
+      setSuccess('KBA documents submitted successfully. Waiting for admin review.')
       navigate('/kba/pending', { replace: true })
     } catch (uploadError) {
-      setError(uploadError.message || 'Failed to upload KBA document')
+      console.error('[KBA Upload] Error:', uploadError)
+      setError(uploadError.message || 'Failed to upload KBA documents')
     } finally {
       setBusyAction('')
     }
@@ -223,7 +247,7 @@ const KbaVerifyPage = () => {
 
         <div className="kba-section">
           <h2>Step 3: Upload KBA Document</h2>
-          <p>Upload a valid ID document for admin approval.</p>
+          <p>Upload both front and back sides of your ID document for admin approval.</p>
           <div className="kba-form-grid">
             <select
               className="kba-select"
@@ -236,19 +260,37 @@ const KbaVerifyPage = () => {
               <option value="driving_license">Driving License</option>
               <option value="voter_id">Voter ID</option>
             </select>
-            <input
-              className="kba-input"
-              type="file"
-              accept="image/*,.pdf"
-              onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
-            />
           </div>
+
+          <div className="kba-form-grid" style={{ gap: '10px' }}>
+            <label style={{ display: 'block' }}>
+              Front side:
+              <input
+                className="kba-input"
+                type="file"
+                accept="image/*,.pdf"
+                onChange={(event) => setSelectedFrontFile(event.target.files?.[0] || null)}
+              />
+            </label>
+            <label style={{ display: 'block' }}>
+              Back side:
+              <input
+                className="kba-input"
+                type="file"
+                accept="image/*,.pdf"
+                onChange={(event) => setSelectedBackFile(event.target.files?.[0] || null)}
+              />
+            </label>
+          </div>
+
           <div className="kba-actions">
             <button className="kba-btn primary" disabled={busyAction === 'upload-kba'} onClick={handleUploadKba}>
               {busyAction === 'upload-kba' ? 'Uploading...' : 'Upload Document'}
             </button>
           </div>
-          {selectedFile && <div className="kba-meta">Selected file: {selectedFile.name}</div>}
+
+          {selectedFrontFile && <div className="kba-meta">Selected front: {selectedFrontFile.name}</div>}
+          {selectedBackFile && <div className="kba-meta">Selected back: {selectedBackFile.name}</div>}
         </div>
 
         <div className="kba-highlight">

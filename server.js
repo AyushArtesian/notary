@@ -189,9 +189,12 @@ CREATE TABLE IF NOT EXISTS otp_challenges (
 CREATE TABLE IF NOT EXISTS kba_submissions (
   userId TEXT PRIMARY KEY,
   documentType TEXT NOT NULL,
-  fileName TEXT NOT NULL,
-  mimeType TEXT,
-  filePath TEXT NOT NULL,
+  fileNameFront TEXT NOT NULL,
+  mimeTypeFront TEXT,
+  filePathFront TEXT NOT NULL,
+  fileNameBack TEXT NOT NULL,
+  mimeTypeBack TEXT,
+  filePathBack TEXT NOT NULL,
   submittedAt INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'kba_pending_review',
   rejectionReason TEXT,
@@ -533,9 +536,12 @@ function ensureKbaSchema() {
       CREATE TABLE IF NOT EXISTS kba_submissions (
         userId TEXT PRIMARY KEY,
         documentType TEXT NOT NULL,
-        fileName TEXT NOT NULL,
-        mimeType TEXT,
-        filePath TEXT NOT NULL,
+        fileNameFront TEXT NOT NULL,
+        mimeTypeFront TEXT,
+        filePathFront TEXT NOT NULL,
+        fileNameBack TEXT NOT NULL,
+        mimeTypeBack TEXT,
+        filePathBack TEXT NOT NULL,
         submittedAt INTEGER NOT NULL,
         status TEXT NOT NULL DEFAULT 'kba_pending_review',
         rejectionReason TEXT,
@@ -544,6 +550,107 @@ function ensureKbaSchema() {
         metadata TEXT
       );
     `);
+
+    // Migration: normalize any legacy/mixed schema to strict front/back schema.
+    const existingKbaColumns = dbAll("PRAGMA table_info(kba_submissions);").map((c) => c.name);
+    if (existingKbaColumns.includes('fileName')) {
+      console.log('🔧 Migrating kba_submissions legacy/mixed schema to front/back schema...');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS kba_submissions_new (
+          userId TEXT PRIMARY KEY,
+          documentType TEXT NOT NULL,
+          fileNameFront TEXT NOT NULL,
+          mimeTypeFront TEXT,
+          filePathFront TEXT NOT NULL,
+          fileNameBack TEXT NOT NULL,
+          mimeTypeBack TEXT,
+          filePathBack TEXT NOT NULL,
+          submittedAt INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'kba_pending_review',
+          rejectionReason TEXT,
+          reviewedAt INTEGER,
+          reviewedBy TEXT,
+          metadata TEXT
+        );
+      `);
+
+      const hasFrontColumns = existingKbaColumns.includes('fileNameFront') && existingKbaColumns.includes('filePathFront');
+      const hasBackColumns = existingKbaColumns.includes('fileNameBack') && existingKbaColumns.includes('filePathBack');
+
+      if (hasFrontColumns) {
+        db.exec(`
+          INSERT INTO kba_submissions_new
+          SELECT
+            userId,
+            documentType,
+            COALESCE(NULLIF(fileNameFront, ''), fileName) AS fileNameFront,
+            COALESCE(mimeTypeFront, mimeType) AS mimeTypeFront,
+            COALESCE(NULLIF(filePathFront, ''), filePath) AS filePathFront,
+            ${hasBackColumns ? "COALESCE(NULLIF(fileNameBack, ''), 'back')" : "'back'"} AS fileNameBack,
+            ${hasBackColumns ? 'mimeTypeBack' : 'NULL'} AS mimeTypeBack,
+            ${hasBackColumns ? "COALESCE(filePathBack, '')" : "''"} AS filePathBack,
+            submittedAt,
+            status,
+            rejectionReason,
+            reviewedAt,
+            reviewedBy,
+            metadata
+          FROM kba_submissions;
+        `);
+      } else {
+        db.exec(`
+          INSERT INTO kba_submissions_new
+          SELECT
+            userId,
+            documentType,
+            fileName AS fileNameFront,
+            mimeType AS mimeTypeFront,
+            filePath AS filePathFront,
+            'back' AS fileNameBack,
+            NULL AS mimeTypeBack,
+            '' AS filePathBack,
+            submittedAt,
+            status,
+            rejectionReason,
+            reviewedAt,
+            reviewedBy,
+            metadata
+          FROM kba_submissions;
+        `);
+      }
+
+      db.exec('DROP TABLE kba_submissions;');
+      db.exec('ALTER TABLE kba_submissions_new RENAME TO kba_submissions;');
+      console.log('✅ Migration complete: kba_submissions normalized to front/back schema');
+    }
+    
+    // Add new columns when upgrading from older schema versions (backup approach)
+    const currentColumns = dbAll("PRAGMA table_info(kba_submissions);").map(c => c.name);
+    if (!currentColumns.includes('fileNameFront')) {
+      console.log('🔧 Adding fileNameFront column...');
+      db.exec("ALTER TABLE kba_submissions ADD COLUMN fileNameFront TEXT NOT NULL DEFAULT 'front';");
+    }
+    if (!currentColumns.includes('mimeTypeFront')) {
+      console.log('🔧 Adding mimeTypeFront column...');
+      db.exec("ALTER TABLE kba_submissions ADD COLUMN mimeTypeFront TEXT;");
+    }
+    if (!currentColumns.includes('filePathFront')) {
+      console.log('🔧 Adding filePathFront column...');
+      db.exec("ALTER TABLE kba_submissions ADD COLUMN filePathFront TEXT;");
+    }
+    if (!currentColumns.includes('fileNameBack')) {
+      console.log('🔧 Adding fileNameBack column...');
+      db.exec("ALTER TABLE kba_submissions ADD COLUMN fileNameBack TEXT NOT NULL DEFAULT 'back';");
+    }
+    if (!currentColumns.includes('mimeTypeBack')) {
+      console.log('🔧 Adding mimeTypeBack column...');
+      db.exec("ALTER TABLE kba_submissions ADD COLUMN mimeTypeBack TEXT;");
+    }
+    if (!currentColumns.includes('filePathBack')) {
+      console.log('🔧 Adding filePathBack column...');
+      db.exec("ALTER TABLE kba_submissions ADD COLUMN filePathBack TEXT;");
+    }
   } catch (err) {
     console.warn('⚠️ Failed to ensure KBA schema:', err.message || err);
   }
@@ -1403,46 +1510,79 @@ app.post('/api/kba/otp/verify', requireAuth, async (req, res) => {
 app.post('/api/kba/upload', requireAuth, (req, res) => {
   try {
     const documentType = String(req.body?.documentType || '').trim();
-    const fileName = String(req.body?.fileName || '').trim() || 'kba-document';
-    const mimeType = String(req.body?.mimeType || '').trim() || 'application/octet-stream';
-    const documentDataUrl = String(req.body?.documentDataUrl || '').trim();
+    let front = req.body?.front || {};
+    let back = req.body?.back || {};
 
-    console.log(`[KBA Upload] User ${req.auth.userId} uploading document: ${fileName}`);
+    // Backward compatibility: old client may send documentDataUrl directly.
+    if (!front.documentDataUrl && req.body?.documentDataUrl) {
+      front = {
+        fileName: String(req.body?.fileName || 'kba-document').trim(),
+        mimeType: String(req.body?.mimeType || 'application/octet-stream').trim(),
+        documentDataUrl: String(req.body?.documentDataUrl || '').trim(),
+      };
+      back = back || {};
+    }
+
+    const fileNameFront = String(front.fileName || '').trim();
+    const mimeTypeFront = String(front.mimeType || 'application/octet-stream').trim();
+    const documentDataUrlFront = String(front.documentDataUrl || '').trim();
+
+    const fileNameBack = String(back.fileName || '').trim();
+    const mimeTypeBack = String(back.mimeType || 'application/octet-stream').trim();
+    const documentDataUrlBack = String(back.documentDataUrl || '').trim();
+
+    console.log(`[KBA Upload] Validating: documentType=${documentType}, frontFile=${fileNameFront}, backFile=${fileNameBack}`);
+    console.log(`[KBA Upload] Front dataUrl length: ${documentDataUrlFront.length}, Back dataUrl length: ${documentDataUrlBack.length}`);
 
     if (!documentType) {
       return res.status(400).json({ error: 'documentType is required' });
     }
-    if (!documentDataUrl) {
-      return res.status(400).json({ error: 'documentDataUrl is required' });
+    
+    if (!fileNameFront) {
+      return res.status(400).json({ error: 'Front side: fileName is required' });
     }
+    if (!documentDataUrlFront) {
+      return res.status(400).json({ error: 'Front side: documentDataUrl is required (file data missing)' });
+    }
+    
+    if (!fileNameBack) {
+      return res.status(400).json({ error: 'Back side: fileName is required' });
+    }
+    if (!documentDataUrlBack) {
+      return res.status(400).json({ error: 'Back side: documentDataUrl is required (file data missing)' });
+    }
+    
     if (!req.auth?.otpVerified) {
       return res.status(403).json({ error: 'Verify OTP before uploading KBA documents' });
     }
 
     const nowMs = now();
     ensureKbaStorageDir();
-    const ext = path.extname(fileName) || '.bin';
-    const safeExt = /^[.A-Za-z0-9_-]+$/.test(ext) ? ext : '.bin';
-    const outPath = path.join(KBA_STORAGE_DIR, `${req.auth.userId}-${nowMs}${safeExt}`);
 
-    console.log(`[KBA Upload] Saving file to: ${outPath}`);
+    const saveSide = (sideFileName, sideMimeType, sideDataUrl, sideLabel) => {
+      const ext = path.extname(sideFileName) || '.bin';
+      const safeExt = /^[.A-Za-z0-9_-]+$/.test(ext) ? ext : '.bin';
+      const outPath = path.join(KBA_STORAGE_DIR, `${req.auth.userId}-${sideLabel}-${nowMs}${safeExt}`);
+      const base64Payload = sideDataUrl.includes(',') ? sideDataUrl.split(',')[1] : sideDataUrl;
+      const buffer = Buffer.from(base64Payload, 'base64');
+      fs.writeFileSync(outPath, buffer);
+      return { outPath, fileSize: buffer.length };
+    };
 
-    const base64Payload = documentDataUrl.includes(',')
-      ? documentDataUrl.split(',')[1]
-      : documentDataUrl;
-    const buffer = Buffer.from(base64Payload, 'base64');
-    fs.writeFileSync(outPath, buffer);
-
-    console.log(`[KBA Upload] File saved successfully (${buffer.length} bytes)`);
+    const frontSave = saveSide(fileNameFront, mimeTypeFront, documentDataUrlFront, 'front');
+    const backSave = saveSide(fileNameBack, mimeTypeBack, documentDataUrlBack, 'back');
 
     dbRun(
-      `INSERT INTO kba_submissions (userId, documentType, fileName, mimeType, filePath, submittedAt, status, rejectionReason, reviewedAt, reviewedBy, metadata)
-       VALUES (:userId, :documentType, :fileName, :mimeType, :filePath, :submittedAt, :status, :rejectionReason, :reviewedAt, :reviewedBy, :metadata)
+      `INSERT INTO kba_submissions (userId, documentType, fileNameFront, mimeTypeFront, filePathFront, fileNameBack, mimeTypeBack, filePathBack, submittedAt, status, rejectionReason, reviewedAt, reviewedBy, metadata)
+       VALUES (:userId, :documentType, :fileNameFront, :mimeTypeFront, :filePathFront, :fileNameBack, :mimeTypeBack, :filePathBack, :submittedAt, :status, :rejectionReason, :reviewedAt, :reviewedBy, :metadata)
        ON CONFLICT(userId) DO UPDATE SET
          documentType = excluded.documentType,
-         fileName = excluded.fileName,
-         mimeType = excluded.mimeType,
-         filePath = excluded.filePath,
+         fileNameFront = excluded.fileNameFront,
+         mimeTypeFront = excluded.mimeTypeFront,
+         filePathFront = excluded.filePathFront,
+         fileNameBack = excluded.fileNameBack,
+         mimeTypeBack = excluded.mimeTypeBack,
+         filePathBack = excluded.filePathBack,
          submittedAt = excluded.submittedAt,
          status = excluded.status,
          rejectionReason = excluded.rejectionReason,
@@ -1452,15 +1592,18 @@ app.post('/api/kba/upload', requireAuth, (req, res) => {
       {
         userId: req.auth.userId,
         documentType,
-        fileName,
-        mimeType,
-        filePath: outPath,
+        fileNameFront,
+        mimeTypeFront,
+        filePathFront: frontSave.outPath,
+        fileNameBack,
+        mimeTypeBack,
+        filePathBack: backSave.outPath,
         submittedAt: nowMs,
         status: KBA_STATUS.PENDING_REVIEW,
         rejectionReason: null,
         reviewedAt: null,
         reviewedBy: null,
-        metadata: JSON.stringify({ size: buffer.length }),
+        metadata: JSON.stringify({ frontSize: frontSave.fileSize, backSize: backSave.fileSize }),
       }
     );
 
@@ -1479,15 +1622,15 @@ app.post('/api/kba/upload', requireAuth, (req, res) => {
 
     persistDatabase();
 
-    console.log(`[KBA Upload] Document successfully stored for user ${req.auth.userId}`);
-    console.log(`[KBA Upload] Submission data: filePath=${outPath}, mimeType=${mimeType}, fileName=${fileName}`);
+    console.log(`[KBA Upload] Documents successfully stored for user ${req.auth.userId}`);
 
     return res.json({
       success: true,
       kbaStatus: KBA_STATUS.PENDING_REVIEW,
       submittedAt: nowMs,
       documentType,
-      fileName,
+      fileNameFront,
+      fileNameBack,
     });
   } catch (error) {
     console.error('Error uploading KBA document:', error);
@@ -1509,8 +1652,10 @@ app.get('/api/kba/status', requireAuth, (req, res) => {
         ? {
             userId: submission.userId,
             documentType: submission.documentType,
-            fileName: submission.fileName,
-            mimeType: submission.mimeType,
+            fileNameFront: submission.fileNameFront || submission.fileName,
+            mimeTypeFront: submission.mimeTypeFront || submission.mimeType,
+            fileNameBack: submission.fileNameBack || null,
+            mimeTypeBack: submission.mimeTypeBack || null,
             submittedAt: submission.submittedAt,
             status: submission.status,
             rejectionReason: submission.rejectionReason,
@@ -1529,7 +1674,10 @@ app.get('/api/admin/kba/pending', requireAuth, requireRole(['admin']), (req, res
   try {
     const items = dbAll(
       `SELECT u.userId, u.username, u.email, u.role, u.kbaStatus, u.kbaUpdatedAt,
-              s.documentType, s.fileName, s.mimeType, s.submittedAt, s.status, s.rejectionReason
+              s.documentType,
+              s.fileNameFront, s.mimeTypeFront, s.filePathFront,
+              s.fileNameBack, s.mimeTypeBack, s.filePathBack,
+              s.submittedAt, s.status, s.rejectionReason
        FROM users u
        LEFT JOIN kba_submissions s ON s.userId = u.userId
        WHERE u.kbaStatus IN (:pendingStatus, :rejectedStatus)
@@ -1549,53 +1697,64 @@ app.get('/api/admin/kba/pending', requireAuth, requireRole(['admin']), (req, res
 app.get('/api/admin/kba/:userId/document', (req, res) => {
   try {
     const { userId } = req.params;
+    const side = String(req.query.side || 'front').toLowerCase();
+
     let token = readAuthToken(req);
-    
-    // Fallback: check query parameter for token
     if (!token && req.query.auth) {
       token = String(req.query.auth).trim();
     }
-    
+
     const payload = verifyAccessToken(token);
     if (!payload) {
       return res.status(401).json({ error: 'Unauthorized: valid Bearer token is required' });
     }
-    
-    // Check if user is admin
+
     const authUser = dbGet('SELECT role FROM users WHERE userId = :userId', { userId: payload.userId });
     if (!authUser || String(authUser.role || '').trim().toLowerCase() !== 'admin') {
       return res.status(403).json({ error: 'Forbidden: admin access required' });
     }
-    
-    console.log(`[KBA Document] Admin ${payload.userId} requesting document for user ${userId}`);
-    
-    const submission = dbGet('SELECT filePath, mimeType, fileName FROM kba_submissions WHERE userId = :userId', { userId });
-    
-    console.log(`[KBA Document] Query result:`, submission);
-    
+
+    console.log(`[KBA Document] Admin ${payload.userId} requesting ${side} document for user ${userId}`);
+
+    const submission = dbGet(
+      'SELECT filePathFront, mimeTypeFront, fileNameFront, filePathBack, mimeTypeBack, fileNameBack FROM kba_submissions WHERE userId = :userId',
+      { userId }
+    );
+
     if (!submission) {
       console.log(`[KBA Document] No submission found for user ${userId}`);
       return res.status(404).json({ error: 'KBA submission not found' });
     }
-    
-    if (!submission.filePath) {
-      console.log(`[KBA Document] Submission found but filePath is null for user ${userId}`);
-      return res.status(404).json({ error: 'KBA document file path not stored' });
+
+    let filePath = side === 'back' ? submission.filePathBack : submission.filePathFront;
+    let mimeType = side === 'back' ? submission.mimeTypeBack : submission.mimeTypeFront;
+    let fileName = side === 'back' ? submission.fileNameBack : submission.fileNameFront;
+
+    // compatibility with old schema for existing rows
+    if (!filePath && side === 'front' && submission.filePath) {
+      filePath = submission.filePath;
+      mimeType = submission.mimeType;
+      fileName = submission.fileName;
     }
-    
-    if (!fs.existsSync(submission.filePath)) {
-      console.log(`[KBA Document] File does not exist at path: ${submission.filePath}`);
-      return res.status(404).json({ error: `Document file not found: ${submission.filePath}` });
+
+    if (!filePath) {
+      console.log(`[KBA Document] Submission found but filePath ${side} is null for user ${userId}`);
+      return res.status(404).json({ error: `KBA ${side} document file path not stored` });
     }
-    
-    const buffer = fs.readFileSync(submission.filePath);
-    const mimeType = submission.mimeType || 'application/octet-stream';
-    const fileName = submission.fileName || 'kba-document';
-    
-    console.log(`[KBA Document] Sending document ${fileName} (${buffer.length} bytes)`);
-    
-    res.setHeader('Content-Type', mimeType);
-    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+
+    if (!fs.existsSync(filePath)) {
+      console.log(`[KBA Document] File does not exist at path: ${filePath}`);
+      return res.status(404).json({ error: `Document file not found: ${filePath}` });
+    }
+
+    const buffer = fs.readFileSync(filePath);
+    const finalMimeType = mimeType || 'application/octet-stream';
+    const finalFileName = fileName || `kba-document-${side}`;
+
+    console.log(`[KBA Document] Sending ${side} document ${finalFileName} (${buffer.length} bytes)`);
+
+    res.setHeader('Content-Type', finalMimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${finalFileName}"`);
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     return res.send(buffer);
   } catch (error) {

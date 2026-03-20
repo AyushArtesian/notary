@@ -92,7 +92,8 @@ const KbaPendingPage = () => {
         <div className="kba-section">
           <h2>Submission Details</h2>
           <p>Document type: {statusData?.submission?.documentType || 'N/A'}</p>
-          <p>File name: {statusData?.submission?.fileName || 'N/A'}</p>
+          <p>Front file: {statusData?.submission?.fileNameFront || 'N/A'}</p>
+          <p>Back file: {statusData?.submission?.fileNameBack || 'N/A'}</p>
           <p>Submitted at: {formatDate(statusData?.submission?.submittedAt)}</p>
           <p>Last status update: {formatDate(statusData?.user?.kbaUpdatedAt)}</p>
         </div>

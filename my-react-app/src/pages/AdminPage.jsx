@@ -19,6 +19,7 @@ const AdminPage = () => {
   const [busySessionId, setBusySessionId] = useState("");
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedKbaSubmission, setSelectedKbaSubmission] = useState(null);
+  const [kbaDocumentSide, setKbaDocumentSide] = useState('front');
   const [kbaDocumentUrl, setKbaDocumentUrl] = useState("");
   const [kbaDocumentLoading, setKbaDocumentLoading] = useState(false);
   const [kbaDocumentError, setKbaDocumentError] = useState("");
@@ -107,10 +108,11 @@ const AdminPage = () => {
 
     const loadDocumentPreview = async () => {
       try {
-        console.log('[KBA Document] Loading document for user:', selectedKbaSubmission.userId);
+        const side = kbaDocumentSide || 'front';
+        console.log('[KBA Document] Loading document for user:', selectedKbaSubmission.userId, 'side:', side);
         setKbaDocumentLoading(true);
         setKbaDocumentError("");
-        const blob = await fetchKbaDocumentAsBlob(selectedKbaSubmission.userId);
+        const blob = await fetchKbaDocumentAsBlob(selectedKbaSubmission.userId, side);
         console.log('[KBA Document] Received blob:', blob.size, 'bytes');
         
         if (isMounted) {
@@ -139,7 +141,7 @@ const AdminPage = () => {
         URL.revokeObjectURL(kbaDocumentUrl);
       }
     };
-  }, [selectedKbaSubmission?.userId]);
+  }, [selectedKbaSubmission?.userId, kbaDocumentSide]);
 
   const clearFlashAfterDelay = () => {
     window.setTimeout(() => {
@@ -565,7 +567,10 @@ const AdminPage = () => {
                         <td>
                           <button
                             className="admin-action-btn"
-                            onClick={() => setSelectedKbaSubmission(submission)}
+                            onClick={() => {
+                              setSelectedKbaSubmission(submission);
+                              setKbaDocumentSide('front');
+                            }}
                             disabled={busyUserId === submission.userId}
                           >
                             Review
@@ -701,7 +706,8 @@ const AdminPage = () => {
                         <p><strong>Email:</strong> {selectedKbaSubmission.email}</p>
                         <p><strong>Role:</strong> {roleLabel(selectedKbaSubmission.role)}</p>
                         <p><strong>Document Type:</strong> {selectedKbaSubmission.documentType || '-'}</p>
-                        <p><strong>File Name:</strong> {selectedKbaSubmission.fileName || '-'}</p>
+                        <p><strong>Front File:</strong> {selectedKbaSubmission.fileNameFront || '-'} </p>
+                        <p><strong>Back File:</strong> {selectedKbaSubmission.fileNameBack || '-'} </p>
                         <p><strong>Current Status:</strong> 
                           <span className={`kba-status-badge kba-status-${(selectedKbaSubmission.kbaStatus || 'draft').toLowerCase().replace(/_/g, '-')}`}>
                             {(selectedKbaSubmission.kbaStatus || 'draft').replace(/_/g, ' ')}
@@ -731,38 +737,55 @@ const AdminPage = () => {
                     <div className="admin-kba-right-panel">
                       <div className="admin-kba-document-section">
                         <h4>Uploaded Document</h4>
+                        <div style={{ marginBottom: '10px', display: 'flex', gap: '8px' }}>
+                          <button
+                            className={`admin-action-btn ${kbaDocumentSide === 'front' ? 'primary' : ''}`}
+                            onClick={() => setKbaDocumentSide('front')}
+                            type="button"
+                          >
+                            Front
+                          </button>
+                          <button
+                            className={`admin-action-btn ${kbaDocumentSide === 'back' ? 'primary' : ''}`}
+                            onClick={() => setKbaDocumentSide('back')}
+                            type="button"
+                          >
+                            Back
+                          </button>
+                        </div>
+
                         {kbaDocumentLoading ? (
                           <div className="admin-kba-loading">Loading document preview...</div>
                         ) : kbaDocumentError ? (
                           <div className="admin-kba-error">{kbaDocumentError}</div>
-                        ) : kbaDocumentUrl && selectedKbaSubmission.mimeType ? (
+                        ) : kbaDocumentUrl ? (
                           <>
-                            {selectedKbaSubmission.mimeType.startsWith('image/') ? (
+                            {((kbaDocumentSide === 'back' ? selectedKbaSubmission.mimeTypeBack : selectedKbaSubmission.mimeTypeFront) || '').startsWith('image/') ? (
                               <div className="admin-kba-image-preview">
-                                <img 
-                                  src={kbaDocumentUrl} 
-                                  alt="KBA Document" 
-                                />
+                                <img src={kbaDocumentUrl} alt={`KBA ${kbaDocumentSide} document`} />
                               </div>
-                            ) : selectedKbaSubmission.mimeType === 'application/pdf' ? (
+                            ) : ((kbaDocumentSide === 'back' ? selectedKbaSubmission.mimeTypeBack : selectedKbaSubmission.mimeTypeFront) === 'application/pdf') ? (
                               <div className="admin-kba-pdf-preview">
-                                <iframe 
-                                  src={kbaDocumentUrl} 
-                                  title="KBA Document Preview"
-                                />
+                                <iframe src={kbaDocumentUrl} title="KBA Document Preview" />
                               </div>
                             ) : (
                               <div className="admin-kba-file-info">
-                                <p><strong>File Type:</strong> {selectedKbaSubmission.mimeType}</p>
-                                <p><strong>File Name:</strong> {selectedKbaSubmission.fileName}</p>
+                                <p>
+                                  <strong>File Type:</strong>{' '}
+                                  {kbaDocumentSide === 'back' ? selectedKbaSubmission.mimeTypeBack : selectedKbaSubmission.mimeTypeFront}
+                                </p>
+                                <p>
+                                  <strong>File Name:</strong>{' '}
+                                  {kbaDocumentSide === 'back' ? selectedKbaSubmission.fileNameBack : selectedKbaSubmission.fileNameFront}
+                                </p>
                               </div>
                             )}
-                            <a 
-                              href={kbaDocumentUrl} 
-                              download={selectedKbaSubmission.fileName}
+                            <a
+                              href={kbaDocumentUrl}
+                              download={kbaDocumentSide === 'back' ? selectedKbaSubmission.fileNameBack : selectedKbaSubmission.fileNameFront}
                               className="admin-kba-download-link"
                             >
-                              Download Document
+                              Download {kbaDocumentSide} document
                             </a>
                           </>
                         ) : (
@@ -776,11 +799,10 @@ const AdminPage = () => {
                     <summary style={{ cursor: 'pointer', fontWeight: '600', color: '#666' }}>Debug Info (click to expand)</summary>
                     <div style={{ marginTop: '8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', color: '#333' }}>
                       User ID: {selectedKbaSubmission.userId}
-                      MIME Type: {selectedKbaSubmission.mimeType}
-                      Loading: {kbaDocumentLoading ? 'YES' : 'NO'} | URL Set: {kbaDocumentUrl ? 'YES' : 'NO'} | Error: {kbaDocumentError || 'None'}
+                      Selected Side: {kbaDocumentSide}
+                      Front MIME Type: {selectedKbaSubmission.mimeTypeFront} | Back MIME Type: {selectedKbaSubmission.mimeTypeBack}
                     </div>
                   </details>
-
                   <div className="admin-kba-modal-footer">
                     <button
                       className="admin-action-btn danger"

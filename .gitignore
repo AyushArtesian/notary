@@ -42,6 +42,6 @@ Thumbs.db
 
 data/
 # or explicit files if needed
-# /data/notary.db
-# /data/users.json
-# /data/notarized
+/data/notary.db
+/data/users.json
+/data/notarized
