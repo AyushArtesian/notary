@@ -1291,7 +1291,11 @@ const OwnerDashboardPage = () => {
             </div>
 
             {/* Screen Recording Section */}
-            <ScreenRecorder />
+            <ScreenRecorder
+              role="owner"
+              sessionId={activeSessions[activeSessionDocId] || previousSessions[activeSessionDocId] || ""}
+              socket={socket}
+            />
 
             {/* Document Editor */}
             <div style={{ marginBottom: "15px", padding: "15px", backgroundColor: "#f5f5f5", borderRadius: "5px" }}>

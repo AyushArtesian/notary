@@ -586,6 +586,7 @@ function removeSessionParticipant(sessionId, socketId) {
 // Store active sessions and users
 const sessions = new Map();
 const userSessions = new Map();
+const liveMeetings = new Map();
 
 const normalizeRoomId = (value) => {
   if (!value) return "";
@@ -2237,6 +2238,7 @@ io.on('connection', (socket) => {
       currentUser: { role, userId },
       ownerConnected: hasOwner,
       notaryConnected: hasNotary,
+      liveMeetingActive: Boolean(liveMeetings.get(roomId)?.active),
       totalUsers: session.users.length,
       allUsers: session.users
     });
@@ -2317,6 +2319,161 @@ io.on('connection', (socket) => {
     io.emit('notarySessionEnded', data);
   });
 
+  socket.on('liveMeetingStarted', (data) => {
+    const userSession = userSessions.get(socket.id);
+    const roomId = normalizeRoomId(data?.sessionId || userSession?.roomId);
+    if (!userSession || !roomId || userSession.roomId !== roomId || userSession.role !== 'notary') {
+      return;
+    }
+
+    liveMeetings.set(roomId, {
+      active: true,
+      hostSocketId: socket.id,
+      startedAt: now(),
+      screenEnabled: data?.screenEnabled !== false,
+      cameraEnabled: data?.cameraEnabled !== false,
+    });
+
+    io.to(roomId).emit('liveMeetingStarted', {
+      sessionId: roomId,
+      fromSocketId: socket.id,
+      screenEnabled: data?.screenEnabled !== false,
+      cameraEnabled: data?.cameraEnabled !== false,
+      startedAt: new Date().toISOString(),
+    });
+  });
+
+  socket.on('liveMeetingEnded', (data) => {
+    const userSession = userSessions.get(socket.id);
+    const roomId = normalizeRoomId(data?.sessionId || userSession?.roomId);
+    if (!userSession || !roomId || userSession.roomId !== roomId) {
+      return;
+    }
+
+    const meeting = liveMeetings.get(roomId);
+    if (!meeting) return;
+    if (meeting.hostSocketId !== socket.id && userSession.role !== 'notary') {
+      return;
+    }
+
+    liveMeetings.delete(roomId);
+    io.to(roomId).emit('liveMeetingEnded', {
+      sessionId: roomId,
+      fromSocketId: socket.id,
+      endedAt: new Date().toISOString(),
+    });
+  });
+
+  socket.on('liveMeetingViewerJoin', (data) => {
+    const userSession = userSessions.get(socket.id);
+    const roomId = normalizeRoomId(data?.sessionId || userSession?.roomId);
+    if (!userSession || !roomId || userSession.roomId !== roomId) {
+      return;
+    }
+
+    const meeting = liveMeetings.get(roomId);
+    if (!meeting?.active) {
+      return;
+    }
+
+    io.to(roomId).emit('liveMeetingViewerJoin', {
+      sessionId: roomId,
+      viewerSocketId: socket.id,
+      fromSocketId: socket.id,
+    });
+  });
+
+  socket.on('liveMeetingViewerLeft', (data) => {
+    const userSession = userSessions.get(socket.id);
+    const roomId = normalizeRoomId(data?.sessionId || userSession?.roomId);
+    if (!userSession || !roomId || userSession.roomId !== roomId) {
+      return;
+    }
+
+    io.to(roomId).emit('liveMeetingViewerLeft', {
+      sessionId: roomId,
+      viewerSocketId: socket.id,
+      fromSocketId: socket.id,
+    });
+  });
+
+  socket.on('liveMeetingOffer', (data) => {
+    const senderSession = userSessions.get(socket.id);
+    const roomId = normalizeRoomId(data?.sessionId || senderSession?.roomId);
+    const targetSocketId = data?.targetSocketId;
+    if (!senderSession || !roomId || senderSession.roomId !== roomId || !targetSocketId || !data?.offer) {
+      return;
+    }
+
+    const targetSession = userSessions.get(targetSocketId);
+    if (!targetSession || targetSession.roomId !== roomId) {
+      return;
+    }
+
+    io.to(targetSocketId).emit('liveMeetingOffer', {
+      sessionId: roomId,
+      fromSocketId: socket.id,
+      targetSocketId,
+      offer: data.offer,
+    });
+  });
+
+  socket.on('liveMeetingAnswer', (data) => {
+    const senderSession = userSessions.get(socket.id);
+    const roomId = normalizeRoomId(data?.sessionId || senderSession?.roomId);
+    const targetSocketId = data?.targetSocketId;
+    if (!senderSession || !roomId || senderSession.roomId !== roomId || !targetSocketId || !data?.answer) {
+      return;
+    }
+
+    const targetSession = userSessions.get(targetSocketId);
+    if (!targetSession || targetSession.roomId !== roomId) {
+      return;
+    }
+
+    io.to(targetSocketId).emit('liveMeetingAnswer', {
+      sessionId: roomId,
+      fromSocketId: socket.id,
+      targetSocketId,
+      answer: data.answer,
+    });
+  });
+
+  socket.on('liveMeetingIceCandidate', (data) => {
+    const senderSession = userSessions.get(socket.id);
+    const roomId = normalizeRoomId(data?.sessionId || senderSession?.roomId);
+    const targetSocketId = data?.targetSocketId;
+    if (!senderSession || !roomId || senderSession.roomId !== roomId || !data?.candidate) {
+      return;
+    }
+
+    if (targetSocketId) {
+      const targetSession = userSessions.get(targetSocketId);
+      if (!targetSession || targetSession.roomId !== roomId) {
+        return;
+      }
+      io.to(targetSocketId).emit('liveMeetingIceCandidate', {
+        sessionId: roomId,
+        fromSocketId: socket.id,
+        targetSocketId,
+        candidate: data.candidate,
+      });
+      return;
+    }
+
+    const meeting = liveMeetings.get(roomId);
+    if (!meeting?.hostSocketId) {
+      return;
+    }
+
+    io.to(meeting.hostSocketId).emit('liveMeetingIceCandidate', {
+      sessionId: roomId,
+      fromSocketId: socket.id,
+      targetSocketId: meeting.hostSocketId,
+      candidate: data.candidate,
+    });
+  });
+
   // Handle owner acknowledging session start
   socket.on('ownerAckSessionStart', (data) => {
     console.log('✅ Owner acknowledged session start:', data);
@@ -2356,6 +2513,23 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     const userSession = userSessions.get(socket.id);
     if (userSession) {
+      const roomId = userSession.roomId;
+      const activeMeeting = liveMeetings.get(roomId);
+      if (activeMeeting?.hostSocketId === socket.id) {
+        liveMeetings.delete(roomId);
+        io.to(roomId).emit('liveMeetingEnded', {
+          sessionId: roomId,
+          fromSocketId: socket.id,
+          endedAt: new Date().toISOString(),
+        });
+      } else if (activeMeeting?.active) {
+        io.to(roomId).emit('liveMeetingViewerLeft', {
+          sessionId: roomId,
+          viewerSocketId: socket.id,
+          fromSocketId: socket.id,
+        });
+      }
+
       const session = sessions.get(userSession.roomId);
       if (session) {
         session.users = session.users.filter((u) => u.socketId !== socket.id);
