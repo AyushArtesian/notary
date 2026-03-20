@@ -770,7 +770,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         </div>
 
         {/* Screen Recorder */}
-        <ScreenRecorder />
+        <ScreenRecorder role="notary" sessionId={sessionId} socket={socket} />
 
         {/* Asset Upload Section */}
         <div style={{ marginBottom: "15px", padding: "15px", backgroundColor: "#f5f5f5", borderRadius: "5px" }}>
