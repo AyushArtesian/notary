@@ -237,6 +237,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         role: "notary",
         userId: authUser.userId || socket.id,
         username: authUser.username || "Notary",
+        token: authUser.token,
       });
 
       // Check if this is a fresh session start (sessionStarted=true in URL)

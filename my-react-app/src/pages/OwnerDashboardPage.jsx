@@ -844,6 +844,7 @@ const OwnerDashboardPage = () => {
       role: "owner",
       userId: authUser?.userId || socket.id,
       username: authUser?.username || "Owner",
+      token: authUser?.token,
     });
 
     return () => {

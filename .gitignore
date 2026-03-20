@@ -39,3 +39,9 @@ dist/
 # OS files
 Thumbs.db
 .DS_Store
+
+data/
+# or explicit files if needed
+/data/notary.db
+/data/users.json
+/data/notarized

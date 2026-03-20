@@ -1,9 +1,33 @@
 [
   {
+    "userId": "cde72725-5eef-4bc2-b119-d4cf8b346581",
+    "username": "user789",
+    "email": "user789@gmail.com",
+    "passwordHash": "f83000ce231e4178c9e3523e3d8e9d61:c569c1178e4d1755d7e8cde04350044de204b6da0852d8b136d7a329f9cc089ed7415411e7a79242eb1c8416f4938f8a62b41ffdea47d5dfe790e4a14691c20b",
+    "role": "owner",
+    "createdAt": "2026-03-20T06:36:40.029Z"
+  },
+  {
+    "userId": "26f326c9-6462-45bc-9270-bca34eabd123",
+    "username": "ayush1234",
+    "email": "ayush12artesian@gmail.com",
+    "passwordHash": "bbe322283bce0c6b0a888666604ba898:8895d045aa7161efa17e777e8d831c002a62efaed705ab5f7378934773ac9f7d3983c827f92b1f584537a2670d0ee53a82c5ab4ffb1c68a41297f93bd133363c",
+    "role": "owner",
+    "createdAt": "2026-03-20T05:48:13.076Z"
+  },
+  {
+    "userId": "280dec3f-2c15-43a6-9a77-38f97146f188",
+    "username": "abc",
+    "email": "abc@gmail.com",
+    "passwordHash": "826677c5c0aa961b7cf8d742eb299583:cb49177bc809d9c921b5a9c77a86acaec1422523d95ec0b65f0ed662c68e2dc801c6130277bc5c40be0a9b5e6e4dba859381663bf14b3e53eb416f373cf0ea21",
+    "role": "owner",
+    "createdAt": "2026-03-20T03:50:03.196Z"
+  },
+  {
     "userId": "admin-seed-001",
     "username": "admin",
     "email": "admin@notary.local",
-    "passwordHash": "2cd94e3ceb6466ea853e8577f9dd0324:724ac637df6ee217a9a921046bbdebb8679d3926d280508f861364e6d5734843c0c04d997b439b89cb64860380b7cb22541ce907ad02034923fbd4de2d5e3c40",
+    "passwordHash": "85507718775f1df9d6c0cafaeb216a58:27b85ba93f1084a3ee41d662d1abdee8869e7fda7c4ae73cf3e9ec95103a2be11c77e2d667c6bee632b1c322be16eb4f2dc6720146d1042c3f9a89b9c7a35e46",
     "role": "admin",
     "createdAt": "2026-03-19T12:26:06.121Z"
   },
