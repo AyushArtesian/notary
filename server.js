@@ -468,7 +468,6 @@ function ensureOwnerDocumentsSchema() {
   }
 }
 
-<<<<<<< HEAD
 function ensureUsersKbaSchema() {
   try {
     const res = db.exec("PRAGMA table_info(users);");
@@ -494,7 +493,9 @@ function ensureUsersKbaSchema() {
     }
   } catch (err) {
     console.warn('⚠️ Failed to ensure users KBA schema:', err.message || err);
-=======
+  }
+}
+
 function autoStartDueScheduledMeetings() {
   try {
     const nowMs = Date.now();
@@ -557,7 +558,6 @@ function autoStartDueScheduledMeetings() {
     }
   } catch (error) {
     console.error('Error auto-starting scheduled meetings:', error);
->>>>>>> origin/features
   }
 }
 
