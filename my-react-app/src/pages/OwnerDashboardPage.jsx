@@ -1917,6 +1917,11 @@ const OwnerDashboardPage = () => {
                       >
                         {status === 'notarized' ? '✓ Notarized' : displayStatus}
                       </span>
+                      {doc.scheduledAt ? (
+                        <div style={{ marginTop: '3px', fontSize: '11px', color: '#059669', fontWeight: 600 }}>
+                          📅 {new Date(doc.scheduledAt).toLocaleDateString()} {new Date(doc.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      ) : null}
                       {adminTerminationNotice?.documentId === doc.id && (
                         <div style={{ marginTop: "4px", fontSize: "11px", color: "#be123c", fontWeight: 600 }}>
                           {adminTerminationNotice.message}

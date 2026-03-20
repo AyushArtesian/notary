@@ -631,5 +631,33 @@ async function endOwnerDocumentSession(documentId, sessionId, notaryName, notary
     throw error;
   }
 }
-export { saveSignature, fetchSignatures, deleteSignature, saveAsset, fetchAssets, deleteAsset, registerUser, loginUser, fetchUsers, fetchAdminOverview, fetchAdminUserInfo, updateAdminUser, deleteAdminUser, terminateAdminSession, saveDocument, saveOwnerDocument, fetchDocuments, fetchOwnerDocuments, fetchNotarizedDocuments, updateDocumentReview, updateOwnerDocumentReview, deleteOwnerDocument, markOwnerDocumentSessionStarted, completeOwnerDocumentNotarization, endOwnerDocumentSession, API_BASE_URL };
+
+async function scheduleOwnerDocumentMeeting(documentId, scheduledAt) {
+  try {
+    const url = `/api/owner-documents/${documentId}/schedule`;
+    console.log('[scheduleOwnerDocumentMeeting] Scheduling:', documentId, 'at', scheduledAt);
+
+    const response = await fetchWithFallback(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ scheduledAt }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    console.log('[scheduleOwnerDocumentMeeting] ✅ Scheduled');
+    return responseData;
+  } catch (error) {
+    console.error('[scheduleOwnerDocumentMeeting] ❌ Error:', error);
+    throw error;
+  }
+}
+
+export { saveSignature, fetchSignatures, deleteSignature, saveAsset, fetchAssets, deleteAsset, registerUser, loginUser, fetchUsers, fetchAdminOverview, fetchAdminUserInfo, updateAdminUser, deleteAdminUser, terminateAdminSession, saveDocument, saveOwnerDocument, fetchDocuments, fetchOwnerDocuments, fetchNotarizedDocuments, updateDocumentReview, updateOwnerDocumentReview, deleteOwnerDocument, markOwnerDocumentSessionStarted, completeOwnerDocumentNotarization, endOwnerDocumentSession, scheduleOwnerDocumentMeeting, API_BASE_URL };
 
