@@ -667,5 +667,188 @@ async function endOwnerDocumentSession(documentId, sessionId, notaryName, notary
     throw error;
   }
 }
-export { saveSignature, fetchSignatures, deleteSignature, saveAsset, fetchAssets, deleteAsset, registerUser, loginUser, fetchUsers, fetchAdminOverview, fetchAdminUserInfo, updateAdminUser, deleteAdminUser, terminateAdminSession, saveDocument, saveOwnerDocument, fetchDocuments, fetchOwnerDocuments, fetchNotarizedDocuments, updateDocumentReview, updateOwnerDocumentReview, deleteOwnerDocument, markOwnerDocumentSessionStarted, completeOwnerDocumentNotarization, endOwnerDocumentSession, API_BASE_URL };
+
+async function sendKbaOtp(destination, channel = 'sms') {
+  const response = await fetchWithFallback('/api/kba/otp/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ destination, channel }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to send OTP');
+  return payload;
+}
+
+async function verifyKbaOtp(otp) {
+  const response = await fetchWithFallback('/api/kba/otp/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ otp }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to verify OTP');
+  return payload;
+}
+
+async function uploadKbaDocument(payload) {
+  const response = await fetchWithFallback('/api/kba/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  const responsePayload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(responsePayload.error || 'Failed to upload KBA document');
+  return responsePayload;
+}
+
+async function fetchKbaStatus() {
+  const response = await fetchWithFallback('/api/kba/status');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to fetch KBA status');
+  return payload;
+}
+
+async function cancelKba() {
+  const response = await fetchWithFallback('/api/kba/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to cancel KBA');
+  return payload;
+}
+
+async function fetchPendingKbaQueue() {
+  const response = await fetchWithFallback('/api/admin/kba/pending');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to fetch KBA queue');
+  return payload;
+}
+
+async function approveKbaSubmission(userId) {
+  const response = await fetchWithFallback(`/api/admin/kba/${userId}/approve`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to approve KBA submission');
+  return payload;
+}
+
+async function rejectKbaSubmission(userId, reason) {
+  const response = await fetchWithFallback(`/api/admin/kba/${userId}/reject`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to reject KBA submission');
+  return payload;
+}
+
+function getKbaDocumentUrl(userId, side = 'front') {
+  const baseUrl = lastWorkingApiBaseUrl || API_BASE_CANDIDATES[0] || '';
+  const token = getAuthToken();
+  return `${baseUrl}/api/admin/kba/${userId}/document?side=${encodeURIComponent(side)}${token ? `&auth=${encodeURIComponent(token)}` : ''}`;
+}
+
+async function fetchKbaDocumentAsBlob(userId, side = 'front') {
+  const endpoint = `/api/admin/kba/${encodeURIComponent(userId)}/document?side=${encodeURIComponent(side)}`;
+
+  try {
+    const response = await fetchWithFallback(endpoint, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/octet-stream',
+      },
+    });
+
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+      } catch (e) {
+        // ignore non-JSON error body
+      }
+      throw new Error(errorMessage);
+    }
+
+    const blob = await response.blob();
+    if (blob.size === 0) throw new Error('Document is empty (0 bytes)');
+    return blob;
+  } catch (err) {
+    console.error('[fetchKbaDocumentAsBlob] Failed:', err);
+    throw new Error(err?.message || 'Failed to fetch KBA document');
+  }
+}
+
+async function debugFetchKbaSubmissions() {
+  const response = await fetchWithFallback('/api/debug/kba-submissions');
+  return await response.json().catch(() => ({}));
+}
+
+async function scheduleOwnerDocumentMeeting(documentId, scheduledAt) {
+  const response = await fetchWithFallback(`/api/owner-documents/${documentId}/schedule`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scheduledAt }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`HTTP ${response.status}: ${errorText}`);
+  }
+
+  const responseData = await response.json();
+  return responseData;
+}
+
+export {
+  saveSignature,
+  fetchSignatures,
+  deleteSignature,
+  saveAsset,
+  fetchAssets,
+  deleteAsset,
+  registerUser,
+  loginUser,
+  fetchUsers,
+  fetchAdminOverview,
+  fetchAdminUserInfo,
+  updateAdminUser,
+  deleteAdminUser,
+  terminateAdminSession,
+  saveDocument,
+  saveOwnerDocument,
+  fetchDocuments,
+  fetchOwnerDocuments,
+  fetchNotarizedDocuments,
+  updateDocumentReview,
+  updateOwnerDocumentReview,
+  deleteOwnerDocument,
+  markOwnerDocumentSessionStarted,
+  completeOwnerDocumentNotarization,
+  endOwnerDocumentSession,
+  sendKbaOtp,
+  verifyKbaOtp,
+  uploadKbaDocument,
+  fetchKbaStatus,
+  cancelKba,
+  fetchPendingKbaQueue,
+  approveKbaSubmission,
+  rejectKbaSubmission,
+  getKbaDocumentUrl,
+  fetchKbaDocumentAsBlob,
+  debugFetchKbaSubmissions,
+  scheduleOwnerDocumentMeeting,
+  API_BASE_URL,
+};
 

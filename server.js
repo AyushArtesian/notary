@@ -1803,27 +1803,12 @@ app.get('/api/admin/kba/pending', requireAuth, requireRole(['admin']), (req, res
   }
 });
 
-app.get('/api/admin/kba/:userId/document', (req, res) => {
+app.get('/api/admin/kba/:userId/document', requireAuth, requireRole(['admin']), (req, res) => {
   try {
     const { userId } = req.params;
     const side = String(req.query.side || 'front').toLowerCase();
 
-    let token = readAuthToken(req);
-    if (!token && req.query.auth) {
-      token = String(req.query.auth).trim();
-    }
-
-    const payload = verifyAccessToken(token);
-    if (!payload) {
-      return res.status(401).json({ error: 'Unauthorized: valid Bearer token is required' });
-    }
-
-    const authUser = dbGet('SELECT role FROM users WHERE userId = :userId', { userId: payload.userId });
-    if (!authUser || String(authUser.role || '').trim().toLowerCase() !== 'admin') {
-      return res.status(403).json({ error: 'Forbidden: admin access required' });
-    }
-
-    console.log(`[KBA Document] Admin ${payload.userId} requesting ${side} document for user ${userId}`);
+    console.log(`[KBA Document] Admin ${req.auth.userId} requesting ${side} document for user ${userId}`);
 
     const submission = dbGet(
       'SELECT filePathFront, mimeTypeFront, fileNameFront, filePathBack, mimeTypeBack, fileNameBack FROM kba_submissions WHERE userId = :userId',
