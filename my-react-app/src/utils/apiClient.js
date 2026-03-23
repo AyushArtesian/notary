@@ -837,6 +837,28 @@ async function scheduleOwnerDocumentMeeting(documentId, scheduledAt) {
   return responseData;
 }
 
+async function fetchNotaryDashboardStats() {
+  try {
+    const response = await fetchWithFallback('/api/notary/dashboard/stats', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    return responseData;
+  } catch (error) {
+    console.error('[fetchNotaryDashboardStats] Error:', error);
+    throw error;
+  }
+}
+
 export {
   saveSignature,
   fetchSignatures,
@@ -876,6 +898,7 @@ export {
   fetchKbaDocumentAsBlob,
   debugFetchKbaSubmissions,
   scheduleOwnerDocumentMeeting,
+  fetchNotaryDashboardStats,
   API_BASE_URL,
 };
 

@@ -6,6 +6,7 @@ import OwnerDocumentViewPage from './pages/OwnerDocumentViewPage'
 import OwnerSessionPage from './pages/OwnerSessionPage'
 import NotaryPage from './pages/NotaryPage'
 import NotaryDocDashboardPage from './pages/NotaryDocDashboardPage'
+import NotaryDashboardPage from './pages/NotaryDashboardPage'
 import AdminPage from './pages/AdminPage'
 import HomePage from './pages/HomePage'
 import AuthPage from './pages/AuthPage'
@@ -261,6 +262,18 @@ function App() {
                 <RequireRole allowedRoles={['notary']}>
                   <RequireKbaApproval>
                     <NotaryDocDashboardPage />
+                  </RequireKbaApproval>
+                </RequireRole>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/notary/dashboard"
+            element={
+              <RequireAuth>
+                <RequireRole allowedRoles={['notary']}>
+                  <RequireKbaApproval>
+                    <NotaryDashboardPage />
                   </RequireKbaApproval>
                 </RequireRole>
               </RequireAuth>

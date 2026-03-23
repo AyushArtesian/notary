@@ -271,6 +271,26 @@ CREATE TABLE IF NOT EXISTS owner_documents (
   paymentTransactionId TEXT,
   paymentMethod TEXT
 );
+
+CREATE TABLE IF NOT EXISTS notary_calls (
+  id TEXT PRIMARY KEY,
+  notaryId TEXT NOT NULL,
+  notaryName TEXT NOT NULL,
+  documentId TEXT NOT NULL,
+  documentName TEXT NOT NULL,
+  ownerId TEXT NOT NULL,
+  ownerName TEXT NOT NULL,
+  sessionId TEXT,
+  callType TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'initiated',
+  amount REAL NOT NULL DEFAULT 0,
+  startedAt INTEGER,
+  completedAt INTEGER,
+  duration INTEGER,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  FOREIGN KEY (documentId) REFERENCES owner_documents(id) ON DELETE CASCADE
+);
 `;
 
 const now = () => Math.floor(Date.now());
@@ -351,6 +371,7 @@ function recoverDatabase(reason) {
   ensureOwnerDocumentsSchema();
   ensureAssetsSchema();
   ensureKbaSchema();
+  ensureNotaryCallsSchema();
   dropLegacyDocumentsTable();
   setupPreparedStatements();
   loadUsersFromJson();
@@ -427,6 +448,7 @@ async function initDatabase() {
   ensureOwnerDocumentsSchema();
   ensureAssetsSchema();
   ensureKbaSchema();
+  ensureNotaryCallsSchema();
   dropLegacyDocumentsTable();
   setupPreparedStatements();
   loadUsersFromJson();
@@ -758,6 +780,56 @@ function ensureKbaSchema() {
     }
   } catch (err) {
     console.warn('⚠️ Failed to ensure KBA schema:', err.message || err);
+  }
+}
+
+function ensureNotaryCallsSchema() {
+  try {
+    const res = db.exec("PRAGMA table_info(notary_calls);");
+    const tableExists = res && res.length > 0;
+    
+    if (!tableExists) {
+      console.log('🔧 Creating notary_calls table...');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS notary_calls (
+          id TEXT PRIMARY KEY,
+          notaryId TEXT NOT NULL,
+          notaryName TEXT NOT NULL,
+          documentId TEXT NOT NULL,
+          documentName TEXT NOT NULL,
+          ownerId TEXT NOT NULL,
+          ownerName TEXT NOT NULL,
+          sessionId TEXT,
+          callType TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'initiated',
+          amount REAL NOT NULL DEFAULT 0,
+          startedAt INTEGER,
+          completedAt INTEGER,
+          duration INTEGER,
+          createdAt INTEGER NOT NULL,
+          updatedAt INTEGER NOT NULL
+        );
+      `);
+      console.log('✅ notary_calls table created');
+    } else {
+      // Ensure all columns exist
+      const columns = (res[0]?.values || []).map((row) => row[1]);
+      
+      if (!columns.includes('callType')) {
+        db.exec("ALTER TABLE notary_calls ADD COLUMN callType TEXT NOT NULL DEFAULT 'ondemand';");
+      }
+      if (!columns.includes('amount')) {
+        db.exec("ALTER TABLE notary_calls ADD COLUMN amount REAL NOT NULL DEFAULT 0;");
+      }
+      if (!columns.includes('duration')) {
+        db.exec("ALTER TABLE notary_calls ADD COLUMN duration INTEGER;");
+      }
+      if (!columns.includes('status')) {
+        db.exec("ALTER TABLE notary_calls ADD COLUMN status TEXT NOT NULL DEFAULT 'initiated';");
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️ Failed to ensure notary_calls schema:', err.message || err);
   }
 }
 
@@ -2845,6 +2917,36 @@ app.put('/api/owner-documents/:id/notarize', requireAuth, requireRole(['notary']
       return res.status(404).json({ error: 'Owner document not found' });
     }
 
+    // Record the notary call
+    try {
+      const callId = crypto.randomUUID();
+      dbRun(
+        `INSERT INTO notary_calls 
+         (id, notaryId, notaryName, documentId, documentName, ownerId, ownerName, sessionId, callType, status, amount, startedAt, completedAt, createdAt, updatedAt)
+         VALUES (:id, :notaryId, :notaryName, :documentId, :documentName, :ownerId, :ownerName, :sessionId, :callType, :status, :amount, :startedAt, :completedAt, :createdAt, :updatedAt)`,
+        {
+          id: callId,
+          notaryId: req.auth.userId,
+          notaryName: notaryName || req.auth.username || 'Unknown Notary',
+          documentId: document.id,
+          documentName: document.name,
+          ownerId: document.ownerId,
+          ownerName: document.ownerName,
+          sessionId: document.sessionId,
+          callType: document.scheduledAt ? 'scheduled' : 'ondemand',
+          status: 'completed',
+          amount: normalizedAmount,
+          startedAt: null,
+          completedAt: nowMs,
+          createdAt: nowMs,
+          updatedAt: nowMs
+        }
+      );
+      persistDatabase();
+    } catch (callRecordErr) {
+      console.warn('⚠️ Failed to record notary call:', callRecordErr?.message || callRecordErr);
+    }
+
     io.emit('documentNotarized', {
       id: document.id,
       documentId: document.id,
@@ -3338,6 +3440,37 @@ app.put('/api/owner-documents/:id/review', requireAuth, requireRole(['notary']),
 
     console.log(`✅ Owner document ${id} reviewed as ${notaryReview} by ${notaryName}`);
 
+    // Record call initiation when accepted
+    if (notaryReview === 'accepted') {
+      try {
+        const callId = crypto.randomUUID();
+        dbRun(
+          `INSERT INTO notary_calls 
+           (id, notaryId, notaryName, documentId, documentName, ownerId, ownerName, sessionId, callType, status, amount, startedAt, createdAt, updatedAt)
+           VALUES (:id, :notaryId, :notaryName, :documentId, :documentName, :ownerId, :ownerName, :sessionId, :callType, :status, :amount, :startedAt, :createdAt, :updatedAt)`,
+          {
+            id: callId,
+            notaryId: req.auth.userId,
+            notaryName: notaryName || req.auth.username || 'Unknown Notary',
+            documentId: document.id,
+            documentName: document.name,
+            ownerId: document.ownerId,
+            ownerName: document.ownerName,
+            sessionId: document.sessionId,
+            callType: document.scheduledAt ? 'scheduled' : 'ondemand',
+            status: 'initiated',
+            amount: document.sessionAmount || 0,
+            startedAt: nowMs,
+            createdAt: nowMs,
+            updatedAt: nowMs
+          }
+        );
+        persistDatabase();
+      } catch (callRecordErr) {
+        console.warn('⚠️ Failed to record notary call on review:', callRecordErr?.message || callRecordErr);
+      }
+    }
+
     io.emit('documentReviewUpdated', {
       id,
       documentId: id,
@@ -3479,6 +3612,101 @@ app.put('/api/owner-documents/:id/schedule', (req, res) => {
   } catch (error) {
     console.error('Error scheduling owner document meeting:', error);
     res.status(500).json({ error: 'Failed to schedule owner document meeting' });
+  }
+});
+
+// Notary Dashboard Statistics
+app.get('/api/notary/dashboard/stats', requireAuth, requireRole(['notary']), (req, res) => {
+  try {
+    const notaryId = req.auth?.userId;
+    if (!notaryId) {
+      return res.status(400).json({ error: 'Notary ID not found' });
+    }
+
+    // Total completed calls (documents notarized/completed)
+    const completedCallsResult = dbGet(
+      `SELECT COUNT(*) as count FROM owner_documents 
+       WHERE notaryId = :notaryId AND (status = 'notarized' OR notaryReview = 'accepted')`,
+      { notaryId }
+    );
+    const totalCompletedCalls = completedCallsResult?.count || 0;
+
+    // On-demand calls (without schedule)
+    const onDemandCallsResult = dbGet(
+      `SELECT COUNT(*) as count FROM owner_documents 
+       WHERE notaryId = :notaryId AND (scheduledAt IS NULL OR scheduledAt = 0) AND inProcess = 0`,
+      { notaryId }
+    );
+    const onDemandCalls = onDemandCallsResult?.count || 0;
+
+    // Scheduled calls (with future schedule and not yet started)
+    const scheduledCallsResult = dbGet(
+      `SELECT COUNT(*) as count FROM owner_documents 
+       WHERE notaryId = :notaryId AND scheduledAt IS NOT NULL AND scheduledAt > :now AND status IN ('accepted', 'session_started')`,
+      { notaryId, now: Date.now() }
+    );
+    const scheduledCalls = scheduledCallsResult?.count || 0;
+
+    // Total transactions amount
+    const transactionsResult = dbGet(
+      `SELECT COALESCE(SUM(sessionAmount), 0) as totalAmount FROM owner_documents 
+       WHERE notaryId = :notaryId AND sessionAmount > 0`,
+      { notaryId }
+    );
+    const totalTransactionAmount = transactionsResult?.totalAmount || 0;
+
+    // Transaction history
+    const transactions = dbAll(
+      `SELECT
+         id,
+         name as documentName,
+         ownerId,
+         ownerName,
+         sessionAmount,
+         status,
+         notarizedAt,
+         uploadedAt,
+         paymentStatus,
+         paymentPaidAt
+       FROM owner_documents
+       WHERE notaryId = :notaryId AND sessionAmount > 0
+       ORDER BY uploadedAt DESC
+       LIMIT 50`,
+      { notaryId }
+    ).map(doc => ({
+      id: doc.id,
+      documentId: doc.id,
+      documentName: doc.documentName,
+      ownerName: doc.ownerName,
+      amount: doc.sessionAmount,
+      status: doc.status,
+      date: doc.notarizedAt || doc.uploadedAt,
+      paymentStatus: doc.paymentStatus || 'not_required',
+      paymentDate: doc.paymentPaidAt
+    }));
+
+    // Available for payout (paid transactions not yet claimed)
+    const payoutResult = dbGet(
+      `SELECT COALESCE(SUM(sessionAmount), 0) as totalPayout FROM owner_documents 
+       WHERE notaryId = :notaryId AND paymentStatus = 'paid' AND sessionAmount > 0`,
+      { notaryId }
+    );
+    const availableForPayout = payoutResult?.totalPayout || 0;
+
+    res.json({
+      success: true,
+      data: {
+        totalCompletedCalls,
+        onDemandCalls,
+        scheduledCalls,
+        totalTransactionAmount,
+        availableForPayout,
+        transactions
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching notary dashboard stats:', error);
+    res.status(500).json({ error: 'Failed to fetch notary dashboard stats' });
   }
 });
 
