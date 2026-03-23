@@ -13,6 +13,10 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
   const [remoteScreenSharing, setRemoteScreenSharing] = useState(false);
   const [liveMeetingError, setLiveMeetingError] = useState("");
   const [cameraBoxPosition, setCameraBoxPosition] = useState({ x: 24, y: 120 });
+  const [ownerBoxPosition, setOwnerBoxPosition] = useState({ x: 340, y: 120 });
+  const [remoteCameraStreamState, setRemoteCameraStreamState] = useState(null);
+  const [remoteScreenStreamState, setRemoteScreenStreamState] = useState(null);
+  const [ownerLocalCameraStreamState, setOwnerLocalCameraStreamState] = useState(null);
   const [isRemoteLiveAvailable, setIsRemoteLiveAvailable] = useState(false);
   const [isOwnerJoinedLiveMeeting, setIsOwnerJoinedLiveMeeting] = useState(false);
 
@@ -37,8 +41,11 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
   const remoteScreenVideoRef = useRef(null);
 
   const cameraBoxRef = useRef(null);
+  const ownerBoxRef = useRef(null);
   const isDraggingCameraRef = useRef(false);
+  const isDraggingOwnerRef = useRef(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
+  const ownerDragOffsetRef = useRef({ x: 0, y: 0 });
 
   const closeNotaryViewerPeer = (viewerSocketId) => {
     const pc = peerConnectionsRef.current.get(viewerSocketId);
@@ -172,6 +179,7 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
       remoteCameraVideoRef.current.srcObject = null;
     }
 
+    setOwnerLocalCameraStreamState(null);
     setIsOwnerJoinedLiveMeeting(false);
     if (clearError) {
       setLiveMeetingError("");
@@ -204,14 +212,18 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
       if (track.kind === "video") {
         const isScreen = track.label.toLowerCase().includes("screen");
         if (isScreen) {
-          remoteScreenStreamRef.current = new MediaStream([track]);
+          const screenStream = new MediaStream([track]);
+          remoteScreenStreamRef.current = screenStream;
+          setRemoteScreenStreamState(screenStream);
           if (remoteScreenVideoRef.current) {
-            remoteScreenVideoRef.current.srcObject = remoteScreenStreamRef.current;
+            remoteScreenVideoRef.current.srcObject = screenStream;
           }
         } else {
-          remoteCameraStreamRef.current = remoteStream;
+          const camStream = remoteStream;
+          remoteCameraStreamRef.current = camStream;
+          setRemoteCameraStreamState(camStream);
           if (remoteCameraVideoRef.current) {
-            remoteCameraVideoRef.current.srcObject = remoteStream;
+            remoteCameraVideoRef.current.srcObject = camStream;
           }
         }
       }
@@ -259,9 +271,18 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
       if (track.kind === "video") {
         const isScreen = track.label.toLowerCase().includes("screen");
         if (isScreen) {
-          remoteScreenStreamRef.current = new MediaStream([track]);
+          const screenStream = new MediaStream([track]);
+          remoteScreenStreamRef.current = screenStream;
+          setRemoteScreenStreamState(screenStream);
           if (remoteScreenVideoRef.current) {
-            remoteScreenVideoRef.current.srcObject = remoteScreenStreamRef.current;
+            remoteScreenVideoRef.current.srcObject = screenStream;
+          }
+        } else {
+          const camStream = remoteStream;
+          remoteCameraStreamRef.current = camStream;
+          setRemoteCameraStreamState(camStream);
+          if (remoteCameraVideoRef.current) {
+            remoteCameraVideoRef.current.srcObject = camStream;
           }
         }
       }
@@ -270,10 +291,10 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
     const cameraVideoTrack = liveCameraStreamRef.current?.getVideoTracks?.()[0];
     const cameraAudioTrack = liveCameraStreamRef.current?.getAudioTracks?.()[0];
 
-    if (cameraVideoTrack) {
+    if (cameraVideoTrack && liveCameraStreamRef.current) {
       pc.addTrack(cameraVideoTrack, liveCameraStreamRef.current);
     }
-    if (cameraAudioTrack) {
+    if (cameraAudioTrack && liveCameraStreamRef.current) {
       pc.addTrack(cameraAudioTrack, liveCameraStreamRef.current);
     }
 
@@ -298,7 +319,6 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
       closeNotaryViewerPeer(viewerSocketId);
     }
   };
-
   const stopLiveMeeting = ({ clearError = true } = {}) => {
     closeAllNotaryViewerPeers();
 
@@ -373,6 +393,22 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
       y: event.clientY - boxRect.top,
     };
     isDraggingCameraRef.current = true;
+    isDraggingOwnerRef.current = false;
+    event.preventDefault();
+  };
+
+  const handleOwnerDragStart = (event) => {
+    if (!ownerBoxRef.current) {
+      return;
+    }
+
+    const boxRect = ownerBoxRef.current.getBoundingClientRect();
+    ownerDragOffsetRef.current = {
+      x: event.clientX - boxRect.left,
+      y: event.clientY - boxRect.top,
+    };
+    isDraggingOwnerRef.current = true;
+    isDraggingCameraRef.current = false;
     event.preventDefault();
   };
 
@@ -388,6 +424,7 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
     try {
       const ownerCameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       ownerLocalCameraStreamRef.current = ownerCameraStream;
+      setOwnerLocalCameraStreamState(ownerCameraStream);
       if (ownerLocalCameraVideoRef.current) {
         ownerLocalCameraVideoRef.current.srcObject = ownerCameraStream;
       }
@@ -409,14 +446,22 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
   };
 
   useEffect(() => {
-    if (!isLiveMeeting) {
-      return;
-    }
-
     if (liveCameraVideoRef.current && liveCameraStreamRef.current) {
       liveCameraVideoRef.current.srcObject = liveCameraStreamRef.current;
     }
-  }, [isLiveMeeting]);
+
+    if (ownerLocalCameraVideoRef.current && ownerLocalCameraStreamRef.current) {
+      ownerLocalCameraVideoRef.current.srcObject = ownerLocalCameraStreamRef.current;
+    }
+
+    if (remoteCameraVideoRef.current && remoteCameraStreamState) {
+      remoteCameraVideoRef.current.srcObject = remoteCameraStreamState;
+    }
+
+    if (remoteScreenVideoRef.current && remoteScreenStreamState) {
+      remoteScreenVideoRef.current.srcObject = remoteScreenStreamState;
+    }
+  }, [isLiveMeeting, isOwnerJoinedLiveMeeting, remoteCameraStreamState, remoteScreenStreamState]);
 
   useEffect(() => {
     if (!socket || !sessionId) return;
@@ -581,27 +626,47 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
 
   useEffect(() => {
     const handleMouseMove = (event) => {
-      if (!isNotaryRole || !isDraggingCameraRef.current || !cameraBoxRef.current) {
+      if (!isNotaryRole && !isOwnerRole) {
         return;
       }
 
-      const boxWidth = cameraBoxRef.current.offsetWidth;
-      const boxHeight = cameraBoxRef.current.offsetHeight;
+      if (isDraggingCameraRef.current && cameraBoxRef.current) {
+        const boxWidth = cameraBoxRef.current.offsetWidth;
+        const boxHeight = cameraBoxRef.current.offsetHeight;
 
-      const unclampedX = event.clientX - dragOffsetRef.current.x;
-      const unclampedY = event.clientY - dragOffsetRef.current.y;
+        const unclampedX = event.clientX - dragOffsetRef.current.x;
+        const unclampedY = event.clientY - dragOffsetRef.current.y;
 
-      const maxX = Math.max(0, window.innerWidth - boxWidth);
-      const maxY = Math.max(0, window.innerHeight - boxHeight);
+        const maxX = Math.max(0, window.innerWidth - boxWidth);
+        const maxY = Math.max(0, window.innerHeight - boxHeight);
 
-      setCameraBoxPosition({
-        x: Math.max(0, Math.min(unclampedX, maxX)),
-        y: Math.max(0, Math.min(unclampedY, maxY)),
-      });
+        setCameraBoxPosition({
+          x: Math.max(0, Math.min(unclampedX, maxX)),
+          y: Math.max(0, Math.min(unclampedY, maxY)),
+        });
+        return;
+      }
+
+      if (isDraggingOwnerRef.current && ownerBoxRef.current) {
+        const boxWidth = ownerBoxRef.current.offsetWidth;
+        const boxHeight = ownerBoxRef.current.offsetHeight;
+
+        const unclampedX = event.clientX - ownerDragOffsetRef.current.x;
+        const unclampedY = event.clientY - ownerDragOffsetRef.current.y;
+
+        const maxX = Math.max(0, window.innerWidth - boxWidth);
+        const maxY = Math.max(0, window.innerHeight - boxHeight);
+
+        setOwnerBoxPosition({
+          x: Math.max(0, Math.min(unclampedX, maxX)),
+          y: Math.max(0, Math.min(unclampedY, maxY)),
+        });
+      }
     };
 
     const handleMouseUp = () => {
       isDraggingCameraRef.current = false;
+      isDraggingOwnerRef.current = false;
     };
 
     window.addEventListener("mousemove", handleMouseMove);
@@ -860,85 +925,53 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
         ) : null}
       </div>
 
-      {isNotaryRole && isLiveMeeting && (
+      {(isNotaryRole || (isOwnerRole && isOwnerJoinedLiveMeeting)) && (
         <div
+          ref={ownerBoxRef}
           style={{
+            position: "fixed",
+            left: `${ownerBoxPosition.x}px`,
+            top: `${ownerBoxPosition.y}px`,
+            width: "280px",
             backgroundColor: "#111",
-            border: "1px solid #263238",
             borderRadius: "6px",
             overflow: "hidden",
-            minHeight: "240px",
-            marginBottom: "10px",
+            boxShadow: "0 8px 20px rgba(0,0,0,0.35)",
+            zIndex: 2500,
+            cursor: "move",
           }}
         >
           <div
+            onMouseDown={handleOwnerDragStart}
             style={{
               color: "#fff",
               padding: "6px 8px",
               fontSize: "12px",
               backgroundColor: "#263238",
+              cursor: "move",
+              userSelect: "none",
               fontWeight: "bold",
             }}
           >
-            Owner Camera
+            {isNotaryRole ? "Owner Camera (Drag)" : "Owner Camera (You, Drag)"}
           </div>
-          <video ref={remoteCameraVideoRef} autoPlay playsInline style={{ width: "100%", display: "block", minHeight: "240px", objectFit: "cover", backgroundColor: "#000" }} />
+          {(isNotaryRole ? remoteCameraStreamState : ownerLocalCameraStreamState) ? (
+            <video
+              ref={isNotaryRole ? remoteCameraVideoRef : ownerLocalCameraVideoRef}
+              autoPlay
+              playsInline
+              muted={!isNotaryRole}
+              style={{ width: "100%", display: "block", height: "160px", objectFit: "cover" }}
+            />
+          ) : (
+            <div style={{ color: "#fff", padding: "12px", textAlign: "center" }}>
+              Waiting for owner camera...
+            </div>
+          )}
         </div>
       )}
 
-      {isNotaryRole && isLiveMeeting && remoteScreenStreamRef.current && (
-        <div
-          style={{
-            backgroundColor: "#111",
-            border: "1px solid #263238",
-            borderRadius: "6px",
-            overflow: "hidden",
-            minHeight: "300px",
-            marginBottom: "10px",
-          }}
-        >
-          <div
-            style={{
-              color: "#fff",
-              padding: "6px 8px",
-              fontSize: "12px",
-              backgroundColor: "#263238",
-              fontWeight: "bold",
-            }}
-          >
-            🖥️ Owner Screen Share
-          </div>
-          <video ref={remoteScreenVideoRef} autoPlay playsInline style={{ width: "100%", display: "block", minHeight: "300px", objectFit: "contain", backgroundColor: "#000" }} />
-        </div>
-      )}
-
-      {isNotaryRole && isLiveMeeting && isScreenSharing && liveScreenStreamRef.current && (
-        <div
-          style={{
-            backgroundColor: "#111",
-            border: "1px solid #263238",
-            borderRadius: "6px",
-            overflow: "hidden",
-            minHeight: "300px",
-            marginBottom: "10px",
-          }}
-        >
-          <div
-            style={{
-              color: "#fff",
-              padding: "6px 8px",
-              fontSize: "12px",
-              backgroundColor: "#263238",
-              fontWeight: "bold",
-            }}
-          >
-            🖥️ Your Screen Share
-          </div>
-          <video ref={liveScreenVideoRef} autoPlay playsInline muted style={{ width: "100%", display: "block", minHeight: "300px", objectFit: "contain", backgroundColor: "#000" }} />
-        </div>
-      )}
-
-      {isNotaryRole && isLiveMeeting && (
+      {(isNotaryRole || (isOwnerRole && isOwnerJoinedLiveMeeting)) && (
         <div
           ref={cameraBoxRef}
           style={{
@@ -951,6 +984,7 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
             overflow: "hidden",
             boxShadow: "0 8px 20px rgba(0,0,0,0.35)",
             zIndex: 2500,
+            cursor: "move",
           }}
         >
           <div
@@ -962,115 +996,31 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
               backgroundColor: "#263238",
               cursor: "move",
               userSelect: "none",
-            }}
-          >
-            Notary Camera (You, Drag)
-          </div>
-          <video ref={liveCameraVideoRef} autoPlay playsInline muted style={{ width: "100%", display: "block", height: "160px", objectFit: "cover" }} />
-        </div>
-      )}
-
-      {isOwnerRole && isOwnerJoinedLiveMeeting && (
-        <div
-          style={{
-            backgroundColor: "#111",
-            border: "1px solid #263238",
-            borderRadius: "6px",
-            overflow: "hidden",
-            minHeight: "240px",
-            marginBottom: "10px",
-          }}
-        >
-          <div
-            style={{
-              color: "#fff",
-              padding: "6px 8px",
-              fontSize: "12px",
-              backgroundColor: "#263238",
               fontWeight: "bold",
             }}
           >
-            Notary Camera
+            {isNotaryRole ? "Notary Camera (You, Drag)" : "Notary Camera (Drag)"}
           </div>
-          <video ref={remoteCameraVideoRef} autoPlay playsInline style={{ width: "100%", display: "block", minHeight: "240px", objectFit: "cover", backgroundColor: "#000" }} />
-        </div>
-      )}
-
-      {isOwnerRole && isOwnerJoinedLiveMeeting && (
-        <div
-          style={{
-            backgroundColor: "#111",
-            border: "1px solid #263238",
-            borderRadius: "6px",
-            overflow: "hidden",
-            minHeight: "180px",
-            marginBottom: "10px",
-          }}
-        >
-          <div
-            style={{
-              color: "#fff",
-              padding: "6px 8px",
-              fontSize: "12px",
-              backgroundColor: "#263238",
-              fontWeight: "bold",
-            }}
-          >
-            Owner Camera (You)
-          </div>
-          <video ref={ownerLocalCameraVideoRef} autoPlay playsInline muted style={{ width: "100%", display: "block", minHeight: "180px", objectFit: "cover", backgroundColor: "#000" }} />
-        </div>
-      )}
-
-      {isOwnerRole && isOwnerJoinedLiveMeeting && remoteScreenStreamRef.current && (
-        <div
-          style={{
-            backgroundColor: "#111",
-            border: "1px solid #263238",
-            borderRadius: "6px",
-            overflow: "hidden",
-            minHeight: "300px",
-            marginBottom: "10px",
-          }}
-        >
-          <div
-            style={{
-              color: "#fff",
-              padding: "6px 8px",
-              fontSize: "12px",
-              backgroundColor: "#263238",
-              fontWeight: "bold",
-            }}
-          >
-            🖥️ Notary Screen Share
-          </div>
-          <video ref={remoteScreenVideoRef} autoPlay playsInline style={{ width: "100%", display: "block", minHeight: "300px", objectFit: "contain", backgroundColor: "#000" }} />
-        </div>
-      )}
-
-      {isOwnerRole && isOwnerJoinedLiveMeeting && isScreenSharing && liveScreenStreamRef.current && (
-        <div
-          style={{
-            backgroundColor: "#111",
-            border: "1px solid #263238",
-            borderRadius: "6px",
-            overflow: "hidden",
-            minHeight: "300px",
-            marginBottom: "10px",
-          }}
-        >
-          <div
-            style={{
-              color: "#fff",
-              padding: "6px 8px",
-              fontSize: "12px",
-              backgroundColor: "#263238",
-              fontWeight: "bold",
-            }}
-          >
-            🖥️ Your Screen Share
-          </div>
-          <video ref={liveScreenVideoRef} autoPlay playsInline muted style={{ width: "100%", display: "block", minHeight: "300px", objectFit: "contain", backgroundColor: "#000" }} />
+          {isNotaryRole ? (
+            <video
+              ref={liveCameraVideoRef}
+              autoPlay
+              playsInline
+              muted
+              style={{ width: "100%", display: "block", height: "160px", objectFit: "cover" }}
+            />
+          ) : remoteCameraStreamState ? (
+            <video
+              ref={remoteCameraVideoRef}
+              autoPlay
+              playsInline
+              style={{ width: "100%", display: "block", height: "160px", objectFit: "cover" }}
+            />
+          ) : (
+            <div style={{ color: "#fff", padding: "12px", textAlign: "center" }}>
+              Waiting for notary camera...
+            </div>
+          )}
         </div>
       )}
 
