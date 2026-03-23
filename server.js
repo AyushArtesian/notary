@@ -238,6 +238,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   notaryIds TEXT,
   participants TEXT,
   active INTEGER DEFAULT 1,
+  terminated INTEGER DEFAULT 0,
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL
 );
@@ -446,6 +447,7 @@ async function initDatabase() {
   db.exec(initSql);
   ensureUsersKbaSchema();
   ensureOwnerDocumentsSchema();
+  ensureSessionsSchema();
   ensureAssetsSchema();
   ensureKbaSchema();
   ensureNotaryCallsSchema();
@@ -454,6 +456,19 @@ async function initDatabase() {
   loadUsersFromJson();
   ensureSeedAdminUser();
   persistDatabase();
+}
+
+function ensureSessionsSchema() {
+  try {
+    const res = db.exec("PRAGMA table_info(sessions);");
+    const columns = (res[0]?.values || []).map((row) => row[1]);
+    if (!columns.includes('terminated')) {
+      console.log('🔧 Adding missing sessions.terminated column');
+      db.exec('ALTER TABLE sessions ADD COLUMN terminated INTEGER DEFAULT 0;');
+    }
+  } catch (err) {
+    console.warn('⚠️ Failed to ensure sessions schema:', err.message || err);
+  }
 }
 
 function ensureOwnerDocumentsSchema() {
@@ -896,6 +911,11 @@ function upsertSessionParticipant({ sessionId, socketId, userId, username, role 
 
   const existing = dbGet('SELECT * FROM sessions WHERE sessionId = :sessionId', { sessionId });
 
+  if (existing && Number(existing.terminated) === 1) {
+    console.warn(`⚠️ Blocked participant join for terminated session ${sessionId}`);
+    return null;
+  }
+
   const participant = { socketId, userId, username, role, joinedAt: now() };
   let participants = [];
   let notaryIds = [];
@@ -1148,6 +1168,7 @@ function terminateLiveSessionByAdmin({ sessionId, adminName, adminUserId, reason
   dbRun(
     `UPDATE sessions
      SET active = 0,
+         terminated = 1,
          participants = :participants,
          notaryIds = :notaryIds,
          updatedAt = :updatedAt
@@ -3733,6 +3754,15 @@ io.on('connection', (socket) => {
       return;
     }
 
+    const existingSession = dbGet('SELECT terminated FROM sessions WHERE sessionId = :sessionId', { sessionId: roomId });
+    if (existingSession && Number(existingSession.terminated) === 1) {
+      socket.emit('sessionTerminated', {
+        sessionId: roomId,
+        message: 'This session was terminated by an administrator and cannot be joined again.',
+      });
+      return;
+    }
+
     const userRow = dbGet('SELECT otpVerified, kbaStatus FROM users WHERE userId = :userId', { userId });
     if (!userRow) {
       socket.emit('authError', { message: 'User record not found for socket session' });
@@ -3815,6 +3845,16 @@ io.on('connection', (socket) => {
   // Handle notary starting a session — broadcast to all connected clients (especially owner)
   socket.on('notarySessionStarted', (data) => {
     console.log('🔔 Notary started session:', data);
+
+    const normalizedSessionId = normalizeRoomId(data?.sessionId || '');
+    const sessionRow = normalizedSessionId ? dbGet('SELECT terminated FROM sessions WHERE sessionId = :sessionId', { sessionId: normalizedSessionId }) : null;
+    if (sessionRow && Number(sessionRow.terminated) === 1) {
+      socket.emit('notarySessionStartRejected', {
+        sessionId: normalizedSessionId,
+        message: 'This session has been terminated by an administrator and cannot be restarted.',
+      });
+      return;
+    }
 
     // Persist session start state to owner document (so owner dashboard can reflect it on refresh)
     try {

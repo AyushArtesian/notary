@@ -221,6 +221,35 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         }, 200);
       };
 
+      const onNotarySessionStartRejected = (payload) => {
+        if (!payload?.sessionId || payload.sessionId !== sessionId) return;
+
+        showToast(payload.message || 'Notary session start rejected because session is terminated.', 'error', 5200);
+
+        setSessionJoined(false);
+        setSessionId(null);
+        setInputSessionId("");
+        setElements([]);
+        setUploadedAssets([]);
+        setUploadedAsset(null);
+        setPdfDataUrl(null);
+        setDocumentInfo(null);
+        setOwnerConnected(false);
+        setConnectedUsers([]);
+        setDocumentId(null);
+
+        localStorage.removeItem("notary.lastSessionId");
+        const params = new URLSearchParams(window.location.search);
+        params.delete("sessionId");
+        params.delete("role");
+        params.delete("documentId");
+        window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
+
+        window.setTimeout(() => {
+          navigate("/notary/doc/dashboard");
+        }, 200);
+      };
+
       // Register listeners BEFORE joining to avoid missing initial presence events.
       socket.on("elementAdded", onElementAdded);
       socket.on("elementUpdated", onElementUpdated);
@@ -231,6 +260,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       socket.on("documentShared", onDocumentShared);
       socket.on("ownerLeftSession", onOwnerLeftSession);
       socket.on("adminSessionTerminated", onAdminSessionTerminated);
+      socket.on("notarySessionStartRejected", onNotarySessionStartRejected);
       const onOwnerPaymentCompleted = (data) => {
         if (!data?.documentId || !documentId) return;
         if (String(data.documentId) !== String(documentId)) return;
@@ -307,6 +337,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         socket.off("sessionStatus", onSessionStatus);
         socket.off("ownerLeftSession", onOwnerLeftSession);
         socket.off("adminSessionTerminated", onAdminSessionTerminated);
+        socket.off("notarySessionStartRejected", onNotarySessionStartRejected);
         socket.off('ownerPaymentCompleted', onOwnerPaymentCompleted);
       };
     }

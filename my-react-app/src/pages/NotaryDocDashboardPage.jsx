@@ -72,6 +72,11 @@ const NotaryDocDashboardPage = () => {
       return;
     }
 
+    if (adminTerminationByDoc[doc.id]) {
+      alert('This session has been terminated by an administrator and cannot be restarted.');
+      return;
+    }
+
     console.log('📤 Notary Starting Session:', { documentId: doc.id, sessionId: doc.sessionId });
     
     // Navigate with a flag to indicate this is a fresh session start
@@ -408,6 +413,7 @@ const NotaryDocDashboardPage = () => {
                     {(status === 'accepted' || status === 'session_started') ? (
                       <button
                         onClick={() => handleStartSession(doc)}
+                        disabled={Boolean(adminTerminationByDoc[doc.id])}
                         style={{
                           border: 'none',
                           borderRadius: '8px',
@@ -415,7 +421,8 @@ const NotaryDocDashboardPage = () => {
                           color: '#ffffff',
                           fontWeight: 600,
                           padding: '8px 12px',
-                          cursor: 'pointer',
+                          cursor: adminTerminationByDoc[doc.id] ? 'not-allowed' : 'pointer',
+                          opacity: adminTerminationByDoc[doc.id] ? 0.6 : 1,
                           fontSize: '12px',
                         }}
                         title="Start a session with this document"
