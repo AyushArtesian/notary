@@ -6,11 +6,15 @@ import OwnerDocumentViewPage from './pages/OwnerDocumentViewPage'
 import OwnerSessionPage from './pages/OwnerSessionPage'
 import NotaryPage from './pages/NotaryPage'
 import NotaryDocDashboardPage from './pages/NotaryDocDashboardPage'
+import NotaryDashboardPage from './pages/NotaryDashboardPage'
 import AdminPage from './pages/AdminPage'
 import HomePage from './pages/HomePage'
 import AuthPage from './pages/AuthPage'
 import AdminLoginPage from './pages/AdminLoginPage'
 import RegisterPage from './pages/RegisterPage'
+import KbaVerifyPage from './pages/KbaVerifyPage'
+import KbaPendingPage from './pages/KbaPendingPage'
+import KbaRejectedPage from './pages/KbaRejectedPage'
 import './App.css'
 
 class ErrorBoundary extends Component {
@@ -61,6 +65,20 @@ const getDefaultRouteByRole = (role) => {
   return null
 }
 
+const getKbaRedirectPath = (authUser) => {
+  const role = authUser?.role
+  if (!['owner', 'notary'].includes(role)) return null
+
+  const status = String(authUser?.kbaStatus || 'draft').trim().toLowerCase()
+  const otpVerified = Boolean(authUser?.otpVerified)
+
+  if (status === 'kba_approved') return null
+  if (status === 'kba_pending_review') return '/kba/pending'
+  if (status === 'kba_rejected') return '/kba/rejected'
+  if (!otpVerified) return '/kba/verify'
+  return '/kba/verify'
+}
+
 const isUserAuthenticated = () => {
   const authUser = getAuthUser()
   const hasCoreFields = Boolean(authUser?.username && authUser?.token && authUser?.role)
@@ -102,6 +120,40 @@ function RequireRole({ children, allowedRoles = [] }) {
   return children
 }
 
+function RequireKbaApproval({ children }) {
+  const authUser = getAuthUser()
+  if (!authUser) {
+    return <Navigate to="/login" replace />
+  }
+
+  const kbaRedirect = getKbaRedirectPath(authUser)
+  if (kbaRedirect) {
+    return <Navigate to={kbaRedirect} replace />
+  }
+
+  return children
+}
+
+function RequireKbaFlowAccess({ children }) {
+  const authUser = getAuthUser()
+  if (!authUser) {
+    return <Navigate to="/login" replace />
+  }
+
+  if (!['owner', 'notary'].includes(authUser.role)) {
+    const fallback = getDefaultRouteByRole(authUser.role)
+    return <Navigate to={fallback || '/'} replace />
+  }
+
+  const kbaRedirect = getKbaRedirectPath(authUser)
+  if (!kbaRedirect) {
+    const fallback = getDefaultRouteByRole(authUser.role)
+    return <Navigate to={fallback || '/'} replace />
+  }
+
+  return children
+}
+
 function App() {
   const authenticated = isUserAuthenticated()
 
@@ -122,6 +174,36 @@ function App() {
             element={<AdminLoginPage />}
           />
           <Route
+            path="/kba/verify"
+            element={
+              <RequireAuth>
+                <RequireKbaFlowAccess>
+                  <KbaVerifyPage />
+                </RequireKbaFlowAccess>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/kba/pending"
+            element={
+              <RequireAuth>
+                <RequireKbaFlowAccess>
+                  <KbaPendingPage />
+                </RequireKbaFlowAccess>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/kba/rejected"
+            element={
+              <RequireAuth>
+                <RequireKbaFlowAccess>
+                  <KbaRejectedPage />
+                </RequireKbaFlowAccess>
+              </RequireAuth>
+            }
+          />
+          <Route
             path="/"
             element={<HomePage />}
           />
@@ -130,7 +212,9 @@ function App() {
             element={
               <RequireAuth>
                 <RequireRole allowedRoles={['owner']}>
-                  <OwnerSessionPage />
+                  <RequireKbaApproval>
+                    <OwnerSessionPage />
+                  </RequireKbaApproval>
                 </RequireRole>
               </RequireAuth>
             }
@@ -140,7 +224,9 @@ function App() {
             element={
               <RequireAuth>
                 <RequireRole allowedRoles={['owner']}>
-                  <OwnerDashboardPage />
+                  <RequireKbaApproval>
+                    <OwnerDashboardPage />
+                  </RequireKbaApproval>
                 </RequireRole>
               </RequireAuth>
             }
@@ -150,7 +236,9 @@ function App() {
             element={
               <RequireAuth>
                 <RequireRole allowedRoles={['owner']}>
-                  <OwnerDocumentViewPage />
+                  <RequireKbaApproval>
+                    <OwnerDocumentViewPage />
+                  </RequireKbaApproval>
                 </RequireRole>
               </RequireAuth>
             }
@@ -160,7 +248,9 @@ function App() {
             element={
               <RequireAuth>
                 <RequireRole allowedRoles={['owner']}>
-                  <OwnerPage />
+                  <RequireKbaApproval>
+                    <OwnerPage />
+                  </RequireKbaApproval>
                 </RequireRole>
               </RequireAuth>
             }
@@ -170,7 +260,21 @@ function App() {
             element={
               <RequireAuth>
                 <RequireRole allowedRoles={['notary']}>
-                  <NotaryDocDashboardPage />
+                  <RequireKbaApproval>
+                    <NotaryDocDashboardPage />
+                  </RequireKbaApproval>
+                </RequireRole>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/notary/dashboard"
+            element={
+              <RequireAuth>
+                <RequireRole allowedRoles={['notary']}>
+                  <RequireKbaApproval>
+                    <NotaryDashboardPage />
+                  </RequireKbaApproval>
                 </RequireRole>
               </RequireAuth>
             }
@@ -180,7 +284,9 @@ function App() {
             element={
               <RequireAuth>
                 <RequireRole allowedRoles={['notary']}>
-                  <NotaryPage />
+                  <RequireKbaApproval>
+                    <NotaryPage />
+                  </RequireKbaApproval>
                 </RequireRole>
               </RequireAuth>
             }

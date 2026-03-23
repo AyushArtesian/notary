@@ -11,8 +11,17 @@ const API_BASE_CANDIDATES = [
   ...(isDev ? ['', 'http://localhost:5001', 'http://localhost:5002', 'http://localhost:5000'] : []),
 ].filter((v) => v !== undefined && v !== null); // keep '' in the list
 
-let lastWorkingApiBaseUrl =
+const storedApiBaseUrl =
   (typeof window !== 'undefined' && window.localStorage.getItem(API_BASE_STORAGE_KEY)) ||
+  null;
+
+if (typeof window !== 'undefined' && configuredApiBaseUrl && storedApiBaseUrl && storedApiBaseUrl !== configuredApiBaseUrl) {
+  window.localStorage.setItem(API_BASE_STORAGE_KEY, configuredApiBaseUrl);
+}
+
+let lastWorkingApiBaseUrl =
+  configuredApiBaseUrl ||
+  storedApiBaseUrl ||
   API_BASE_CANDIDATES[0];
 
 const getBaseUrlPriority = () => {
@@ -20,12 +29,38 @@ const getBaseUrlPriority = () => {
   return [...new Set(ordered)];
 };
 
+const getAuthToken = () => {
+  try {
+    const authUser = JSON.parse(localStorage.getItem('notary.authUser') || 'null');
+    return authUser?.token || null;
+  } catch {
+    return null;
+  }
+};
+
+const withAuthOptions = (options = {}) => {
+  const token = getAuthToken();
+  const headers = {
+    ...(options.headers || {}),
+  };
+
+  if (token && !headers.Authorization) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  return {
+    ...options,
+    headers,
+  };
+};
+
 async function fetchWithFallback(path, options = {}) {
   let networkError = null;
+  const requestOptions = withAuthOptions(options);
 
   for (const baseUrl of getBaseUrlPriority()) {
     try {
-      const response = await fetch(`${baseUrl}${path}`, options);
+      const response = await fetch(`${baseUrl}${path}`, requestOptions);
       lastWorkingApiBaseUrl = baseUrl;
       if (typeof window !== 'undefined') {
         window.localStorage.setItem(API_BASE_STORAGE_KEY, baseUrl);
@@ -42,10 +77,11 @@ async function fetchWithFallback(path, options = {}) {
 async function fetchWithNotFoundFallback(path, options = {}) {
   let networkError = null;
   let lastNotFoundResponse = null;
+  const requestOptions = withAuthOptions(options);
 
   for (const baseUrl of getBaseUrlPriority()) {
     try {
-      const response = await fetch(`${baseUrl}${path}`, options);
+      const response = await fetch(`${baseUrl}${path}`, requestOptions);
 
       if (response.status === 404) {
         lastNotFoundResponse = response;
@@ -575,13 +611,16 @@ async function markOwnerDocumentSessionStarted(documentId, sessionId, notaryName
   }
 }
 
-async function completeOwnerDocumentNotarization(documentId, notaryName, notarizedDataUrl) {
+async function completeOwnerDocumentNotarization(documentId, notaryName, notarizedDataUrl, sessionAmount) {
   try {
     const url = `/api/owner-documents/${documentId}/notarize`;
     console.log('[completeOwnerDocumentNotarization] Notarizing:', documentId);
 
     const payload = { notaryName };
     if (notarizedDataUrl) payload.notarizedDataUrl = notarizedDataUrl;
+    if (sessionAmount !== undefined && sessionAmount !== null && sessionAmount !== '') {
+      payload.sessionAmount = Number(sessionAmount);
+    }
 
     const response = await fetchWithFallback(url, {
       method: 'PUT',
@@ -601,6 +640,29 @@ async function completeOwnerDocumentNotarization(documentId, notaryName, notariz
     return responseData;
   } catch (error) {
     console.error('[completeOwnerDocumentNotarization] ❌ Error:', error);
+    throw error;
+  }
+}
+
+async function payOwnerDocumentSession(documentId, paymentPayload = {}) {
+  try {
+    const url = `/api/owner-documents/${documentId}/pay`;
+    const response = await fetchWithFallback(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(paymentPayload),
+    });
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.error || 'Failed to complete payment');
+    }
+
+    return result;
+  } catch (error) {
+    console.error('[payOwnerDocumentSession] ❌ Error:', error);
     throw error;
   }
 }
@@ -631,5 +693,212 @@ async function endOwnerDocumentSession(documentId, sessionId, notaryName, notary
     throw error;
   }
 }
-export { saveSignature, fetchSignatures, deleteSignature, saveAsset, fetchAssets, deleteAsset, registerUser, loginUser, fetchUsers, fetchAdminOverview, fetchAdminUserInfo, updateAdminUser, deleteAdminUser, terminateAdminSession, saveDocument, saveOwnerDocument, fetchDocuments, fetchOwnerDocuments, fetchNotarizedDocuments, updateDocumentReview, updateOwnerDocumentReview, deleteOwnerDocument, markOwnerDocumentSessionStarted, completeOwnerDocumentNotarization, endOwnerDocumentSession, API_BASE_URL };
+
+async function sendKbaOtp(destination, channel = 'sms') {
+  const response = await fetchWithFallback('/api/kba/otp/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ destination, channel }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to send OTP');
+  return payload;
+}
+
+async function verifyKbaOtp(otp) {
+  const response = await fetchWithFallback('/api/kba/otp/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ otp }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to verify OTP');
+  return payload;
+}
+
+async function uploadKbaDocument(payload) {
+  const response = await fetchWithFallback('/api/kba/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  const responsePayload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(responsePayload.error || 'Failed to upload KBA document');
+  return responsePayload;
+}
+
+async function fetchKbaStatus() {
+  const response = await fetchWithFallback('/api/kba/status');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to fetch KBA status');
+  return payload;
+}
+
+async function cancelKba() {
+  const response = await fetchWithFallback('/api/kba/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to cancel KBA');
+  return payload;
+}
+
+async function fetchPendingKbaQueue() {
+  const response = await fetchWithFallback('/api/admin/kba/pending');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to fetch KBA queue');
+  return payload;
+}
+
+async function approveKbaSubmission(userId) {
+  const response = await fetchWithFallback(`/api/admin/kba/${userId}/approve`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to approve KBA submission');
+  return payload;
+}
+
+async function rejectKbaSubmission(userId, reason) {
+  const response = await fetchWithFallback(`/api/admin/kba/${userId}/reject`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Failed to reject KBA submission');
+  return payload;
+}
+
+function getKbaDocumentUrl(userId, side = 'front') {
+  const baseUrl = lastWorkingApiBaseUrl || API_BASE_CANDIDATES[0] || '';
+  const token = getAuthToken();
+  return `${baseUrl}/api/admin/kba/${userId}/document?side=${encodeURIComponent(side)}${token ? `&auth=${encodeURIComponent(token)}` : ''}`;
+}
+
+async function fetchKbaDocumentAsBlob(userId, side = 'front') {
+  const endpoint = `/api/admin/kba/${encodeURIComponent(userId)}/document?side=${encodeURIComponent(side)}`;
+
+  try {
+    const response = await fetchWithFallback(endpoint, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/octet-stream',
+      },
+    });
+
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+      } catch (e) {
+        // ignore non-JSON error body
+      }
+      throw new Error(errorMessage);
+    }
+
+    const blob = await response.blob();
+    if (blob.size === 0) throw new Error('Document is empty (0 bytes)');
+    return blob;
+  } catch (err) {
+    console.error('[fetchKbaDocumentAsBlob] Failed:', err);
+    throw new Error(err?.message || 'Failed to fetch KBA document');
+  }
+}
+
+async function debugFetchKbaSubmissions() {
+  const response = await fetchWithFallback('/api/debug/kba-submissions');
+  return await response.json().catch(() => ({}));
+}
+
+async function scheduleOwnerDocumentMeeting(documentId, scheduledAt) {
+  const response = await fetchWithFallback(`/api/owner-documents/${documentId}/schedule`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scheduledAt }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`HTTP ${response.status}: ${errorText}`);
+  }
+
+  const responseData = await response.json();
+  return responseData;
+}
+
+async function fetchNotaryDashboardStats() {
+  try {
+    const response = await fetchWithFallback('/api/notary/dashboard/stats', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    return responseData;
+  } catch (error) {
+    console.error('[fetchNotaryDashboardStats] Error:', error);
+    throw error;
+  }
+}
+
+export {
+  saveSignature,
+  fetchSignatures,
+  deleteSignature,
+  saveAsset,
+  fetchAssets,
+  deleteAsset,
+  registerUser,
+  loginUser,
+  fetchUsers,
+  fetchAdminOverview,
+  fetchAdminUserInfo,
+  updateAdminUser,
+  deleteAdminUser,
+  terminateAdminSession,
+  saveDocument,
+  saveOwnerDocument,
+  fetchDocuments,
+  fetchOwnerDocuments,
+  fetchNotarizedDocuments,
+  updateDocumentReview,
+  updateOwnerDocumentReview,
+  deleteOwnerDocument,
+  markOwnerDocumentSessionStarted,
+  completeOwnerDocumentNotarization,
+  payOwnerDocumentSession,
+  endOwnerDocumentSession,
+  sendKbaOtp,
+  verifyKbaOtp,
+  uploadKbaDocument,
+  fetchKbaStatus,
+  cancelKba,
+  fetchPendingKbaQueue,
+  approveKbaSubmission,
+  rejectKbaSubmission,
+  getKbaDocumentUrl,
+  fetchKbaDocumentAsBlob,
+  debugFetchKbaSubmissions,
+  scheduleOwnerDocumentMeeting,
+  fetchNotaryDashboardStats,
+  API_BASE_URL,
+};
 

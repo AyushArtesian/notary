@@ -16,7 +16,7 @@ const HomePage = () => {
           <div className="home-nav-buttons">
             <button
               className="nav-btn login-btn"
-              onClick={() => navigate("/auth")}
+              onClick={() => navigate("/login")}
             >
               Login
             </button>

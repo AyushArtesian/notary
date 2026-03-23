@@ -26,6 +26,12 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const initSqlJs = require('sql.js');
+let nodemailer = null;
+try {
+  nodemailer = require('nodemailer');
+} catch {
+  nodemailer = null;
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -158,7 +164,43 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT UNIQUE NOT NULL,
   passwordHash TEXT NOT NULL,
   role TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  otpVerified INTEGER NOT NULL DEFAULT 0,
+  kbaStatus TEXT NOT NULL DEFAULT 'draft',
+  kbaApprovedAt INTEGER,
+  kbaRejectedReason TEXT,
+  kbaUpdatedAt INTEGER,
+  phoneNumber TEXT
+);
+
+CREATE TABLE IF NOT EXISTS otp_challenges (
+  id TEXT PRIMARY KEY,
+  userId TEXT NOT NULL,
+  destination TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  otpHash TEXT NOT NULL,
+  expiresAt INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  maxAttempts INTEGER NOT NULL DEFAULT 5,
+  verifiedAt INTEGER,
   createdAt INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS kba_submissions (
+  userId TEXT PRIMARY KEY,
+  documentType TEXT NOT NULL,
+  fileNameFront TEXT NOT NULL,
+  mimeTypeFront TEXT,
+  filePathFront TEXT NOT NULL,
+  fileNameBack TEXT NOT NULL,
+  mimeTypeBack TEXT,
+  filePathBack TEXT NOT NULL,
+  submittedAt INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'kba_pending_review',
+  rejectionReason TEXT,
+  reviewedAt INTEGER,
+  reviewedBy TEXT,
+  metadata TEXT
 );
 
 CREATE TABLE IF NOT EXISTS signatures (
@@ -205,6 +247,7 @@ CREATE TABLE IF NOT EXISTS owner_documents (
   ownerId TEXT NOT NULL,
   ownerName TEXT NOT NULL,
   sessionId TEXT,
+  scheduledAt INTEGER,
   name TEXT NOT NULL,
   size INTEGER,
   type TEXT,
@@ -219,7 +262,34 @@ CREATE TABLE IF NOT EXISTS owner_documents (
   notaryName TEXT,
   notaryReview TEXT DEFAULT 'pending',
   notaryReviewedAt INTEGER,
-  status TEXT NOT NULL DEFAULT 'uploaded'
+  status TEXT NOT NULL DEFAULT 'uploaded',
+  sessionAmount REAL NOT NULL DEFAULT 0,
+  paymentStatus TEXT NOT NULL DEFAULT 'not_required',
+  paymentRequestedAt INTEGER,
+  paymentRequestedBy TEXT,
+  paymentPaidAt INTEGER,
+  paymentTransactionId TEXT,
+  paymentMethod TEXT
+);
+
+CREATE TABLE IF NOT EXISTS notary_calls (
+  id TEXT PRIMARY KEY,
+  notaryId TEXT NOT NULL,
+  notaryName TEXT NOT NULL,
+  documentId TEXT NOT NULL,
+  documentName TEXT NOT NULL,
+  ownerId TEXT NOT NULL,
+  ownerName TEXT NOT NULL,
+  sessionId TEXT,
+  callType TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'initiated',
+  amount REAL NOT NULL DEFAULT 0,
+  startedAt INTEGER,
+  completedAt INTEGER,
+  duration INTEGER,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL,
+  FOREIGN KEY (documentId) REFERENCES owner_documents(id) ON DELETE CASCADE
 );
 `;
 
@@ -297,8 +367,11 @@ function recoverDatabase(reason) {
   // Create a fresh database
   db = new SQL.Database();
   db.exec(initSql);
+  ensureUsersKbaSchema();
   ensureOwnerDocumentsSchema();
   ensureAssetsSchema();
+  ensureKbaSchema();
+  ensureNotaryCallsSchema();
   dropLegacyDocumentsTable();
   setupPreparedStatements();
   loadUsersFromJson();
@@ -371,8 +444,11 @@ async function initDatabase() {
   }
 
   db.exec(initSql);
+  ensureUsersKbaSchema();
   ensureOwnerDocumentsSchema();
   ensureAssetsSchema();
+  ensureKbaSchema();
+  ensureNotaryCallsSchema();
   dropLegacyDocumentsTable();
   setupPreparedStatements();
   loadUsersFromJson();
@@ -400,6 +476,38 @@ function ensureOwnerDocumentsSchema() {
       console.log('🔧 Adding missing owner_documents.notarizedPath column');
       db.exec("ALTER TABLE owner_documents ADD COLUMN notarizedPath TEXT;");
     }
+    if (!columns.includes('scheduledAt')) {
+      console.log('🔧 Adding missing owner_documents.scheduledAt column');
+      db.exec("ALTER TABLE owner_documents ADD COLUMN scheduledAt INTEGER;");
+    }
+    if (!columns.includes('sessionAmount')) {
+      console.log('🔧 Adding missing owner_documents.sessionAmount column');
+      db.exec("ALTER TABLE owner_documents ADD COLUMN sessionAmount REAL NOT NULL DEFAULT 0;");
+    }
+    if (!columns.includes('paymentStatus')) {
+      console.log('🔧 Adding missing owner_documents.paymentStatus column');
+      db.exec("ALTER TABLE owner_documents ADD COLUMN paymentStatus TEXT NOT NULL DEFAULT 'not_required';");
+    }
+    if (!columns.includes('paymentRequestedAt')) {
+      console.log('🔧 Adding missing owner_documents.paymentRequestedAt column');
+      db.exec("ALTER TABLE owner_documents ADD COLUMN paymentRequestedAt INTEGER;");
+    }
+    if (!columns.includes('paymentRequestedBy')) {
+      console.log('🔧 Adding missing owner_documents.paymentRequestedBy column');
+      db.exec("ALTER TABLE owner_documents ADD COLUMN paymentRequestedBy TEXT;");
+    }
+    if (!columns.includes('paymentPaidAt')) {
+      console.log('🔧 Adding missing owner_documents.paymentPaidAt column');
+      db.exec("ALTER TABLE owner_documents ADD COLUMN paymentPaidAt INTEGER;");
+    }
+    if (!columns.includes('paymentTransactionId')) {
+      console.log('🔧 Adding missing owner_documents.paymentTransactionId column');
+      db.exec("ALTER TABLE owner_documents ADD COLUMN paymentTransactionId TEXT;");
+    }
+    if (!columns.includes('paymentMethod')) {
+      console.log('🔧 Adding missing owner_documents.paymentMethod column');
+      db.exec("ALTER TABLE owner_documents ADD COLUMN paymentMethod TEXT;");
+    }
 
     // Normalize legacy rows from earlier workflow bug where accepted docs were marked notarized.
     db.exec(`
@@ -414,6 +522,99 @@ function ensureOwnerDocumentsSchema() {
     `);
   } catch (err) {
     console.warn('⚠️ Failed to ensure owner_documents schema:', err.message || err);
+  }
+}
+
+function ensureUsersKbaSchema() {
+  try {
+    const res = db.exec("PRAGMA table_info(users);");
+    const columns = (res[0]?.values || []).map((row) => row[1]);
+
+    if (!columns.includes('otpVerified')) {
+      db.exec('ALTER TABLE users ADD COLUMN otpVerified INTEGER NOT NULL DEFAULT 0;');
+    }
+    if (!columns.includes('kbaStatus')) {
+      db.exec(`ALTER TABLE users ADD COLUMN kbaStatus TEXT NOT NULL DEFAULT '${KBA_STATUS.DRAFT}';`);
+    }
+    if (!columns.includes('kbaApprovedAt')) {
+      db.exec('ALTER TABLE users ADD COLUMN kbaApprovedAt INTEGER;');
+    }
+    if (!columns.includes('kbaRejectedReason')) {
+      db.exec('ALTER TABLE users ADD COLUMN kbaRejectedReason TEXT;');
+    }
+    if (!columns.includes('kbaUpdatedAt')) {
+      db.exec('ALTER TABLE users ADD COLUMN kbaUpdatedAt INTEGER;');
+    }
+    if (!columns.includes('phoneNumber')) {
+      db.exec('ALTER TABLE users ADD COLUMN phoneNumber TEXT;');
+    }
+  } catch (err) {
+    console.warn('⚠️ Failed to ensure users KBA schema:', err.message || err);
+  }
+}
+
+function autoStartDueScheduledMeetings() {
+  try {
+    const nowMs = Date.now();
+    const dueDocuments = dbAll(
+      `SELECT * FROM owner_documents
+       WHERE status = 'accepted'
+         AND scheduledAt IS NOT NULL
+         AND scheduledAt <= :nowMs`,
+      { nowMs }
+    );
+
+    dueDocuments.forEach((doc) => {
+      dbRun(
+        `
+        UPDATE owner_documents
+        SET status = :status,
+            inProcess = :inProcess,
+            notarized = :notarized,
+            notaryReview = :notaryReview
+        WHERE id = :id
+      `,
+        {
+          id: doc.id,
+          status: 'session_started',
+          inProcess: 1,
+          notarized: 0,
+          notaryReview: 'accepted',
+        }
+      );
+
+      const updatedDoc = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id: doc.id });
+      if (!updatedDoc) return;
+
+      io.emit('documentReviewUpdated', {
+        id: updatedDoc.id,
+        documentId: updatedDoc.id,
+        sessionId: updatedDoc.sessionId,
+        ownerId: updatedDoc.ownerId,
+        notaryReview: updatedDoc.notaryReview || 'accepted',
+        notaryName: updatedDoc.notaryName || 'Unknown Notary',
+        notaryReviewedAt: updatedDoc.notaryReviewedAt,
+        status: updatedDoc.status,
+        scheduledAt: updatedDoc.scheduledAt,
+      });
+
+      io.emit('notarySessionStarted', {
+        documentId: updatedDoc.id,
+        sessionId: updatedDoc.sessionId,
+        notaryName: updatedDoc.notaryName || 'Unknown Notary',
+        notaryUserId: updatedDoc.notaryId || null,
+        scheduledAt: updatedDoc.scheduledAt,
+        timestamp: new Date().toISOString(),
+      });
+
+      console.log(`⏰ Auto-started scheduled meeting for document ${updatedDoc.id} at ${updatedDoc.scheduledAt}`);
+    });
+
+    if (dueDocuments.length > 0) {
+      persistDatabase();
+    }
+  } catch (error) {
+    console.error('Error auto-starting scheduled meetings:', error);
   }
 }
 
@@ -438,6 +639,197 @@ function ensureAssetsSchema() {
     `);
   } catch (err) {
     console.warn('⚠️ Failed to ensure assets schema:', err.message || err);
+  }
+}
+
+function ensureKbaSchema() {
+  try {
+    ensureKbaStorageDir();
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS otp_challenges (
+        id TEXT PRIMARY KEY,
+        userId TEXT NOT NULL,
+        destination TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        otpHash TEXT NOT NULL,
+        expiresAt INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        maxAttempts INTEGER NOT NULL DEFAULT 5,
+        verifiedAt INTEGER,
+        createdAt INTEGER NOT NULL
+      );
+    `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS kba_submissions (
+        userId TEXT PRIMARY KEY,
+        documentType TEXT NOT NULL,
+        fileNameFront TEXT NOT NULL,
+        mimeTypeFront TEXT,
+        filePathFront TEXT NOT NULL,
+        fileNameBack TEXT NOT NULL,
+        mimeTypeBack TEXT,
+        filePathBack TEXT NOT NULL,
+        submittedAt INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'kba_pending_review',
+        rejectionReason TEXT,
+        reviewedAt INTEGER,
+        reviewedBy TEXT,
+        metadata TEXT
+      );
+    `);
+
+    // Migration: normalize any legacy/mixed schema to strict front/back schema.
+    const existingKbaColumns = dbAll("PRAGMA table_info(kba_submissions);").map((c) => c.name);
+    if (existingKbaColumns.includes('fileName')) {
+      console.log('🔧 Migrating kba_submissions legacy/mixed schema to front/back schema...');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS kba_submissions_new (
+          userId TEXT PRIMARY KEY,
+          documentType TEXT NOT NULL,
+          fileNameFront TEXT NOT NULL,
+          mimeTypeFront TEXT,
+          filePathFront TEXT NOT NULL,
+          fileNameBack TEXT NOT NULL,
+          mimeTypeBack TEXT,
+          filePathBack TEXT NOT NULL,
+          submittedAt INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'kba_pending_review',
+          rejectionReason TEXT,
+          reviewedAt INTEGER,
+          reviewedBy TEXT,
+          metadata TEXT
+        );
+      `);
+
+      const hasFrontColumns = existingKbaColumns.includes('fileNameFront') && existingKbaColumns.includes('filePathFront');
+      const hasBackColumns = existingKbaColumns.includes('fileNameBack') && existingKbaColumns.includes('filePathBack');
+
+      if (hasFrontColumns) {
+        db.exec(`
+          INSERT INTO kba_submissions_new
+          SELECT
+            userId,
+            documentType,
+            COALESCE(NULLIF(fileNameFront, ''), fileName) AS fileNameFront,
+            COALESCE(mimeTypeFront, mimeType) AS mimeTypeFront,
+            COALESCE(NULLIF(filePathFront, ''), filePath) AS filePathFront,
+            ${hasBackColumns ? "COALESCE(NULLIF(fileNameBack, ''), 'back')" : "'back'"} AS fileNameBack,
+            ${hasBackColumns ? 'mimeTypeBack' : 'NULL'} AS mimeTypeBack,
+            ${hasBackColumns ? "COALESCE(filePathBack, '')" : "''"} AS filePathBack,
+            submittedAt,
+            status,
+            rejectionReason,
+            reviewedAt,
+            reviewedBy,
+            metadata
+          FROM kba_submissions;
+        `);
+      } else {
+        db.exec(`
+          INSERT INTO kba_submissions_new
+          SELECT
+            userId,
+            documentType,
+            fileName AS fileNameFront,
+            mimeType AS mimeTypeFront,
+            filePath AS filePathFront,
+            'back' AS fileNameBack,
+            NULL AS mimeTypeBack,
+            '' AS filePathBack,
+            submittedAt,
+            status,
+            rejectionReason,
+            reviewedAt,
+            reviewedBy,
+            metadata
+          FROM kba_submissions;
+        `);
+      }
+
+      db.exec('DROP TABLE kba_submissions;');
+      db.exec('ALTER TABLE kba_submissions_new RENAME TO kba_submissions;');
+      console.log('✅ Migration complete: kba_submissions normalized to front/back schema');
+    }
+    
+    // Add new columns when upgrading from older schema versions (backup approach)
+    const currentColumns = dbAll("PRAGMA table_info(kba_submissions);").map(c => c.name);
+    if (!currentColumns.includes('fileNameFront')) {
+      console.log('🔧 Adding fileNameFront column...');
+      db.exec("ALTER TABLE kba_submissions ADD COLUMN fileNameFront TEXT NOT NULL DEFAULT 'front';");
+    }
+    if (!currentColumns.includes('mimeTypeFront')) {
+      console.log('🔧 Adding mimeTypeFront column...');
+      db.exec("ALTER TABLE kba_submissions ADD COLUMN mimeTypeFront TEXT;");
+    }
+    if (!currentColumns.includes('filePathFront')) {
+      console.log('🔧 Adding filePathFront column...');
+      db.exec("ALTER TABLE kba_submissions ADD COLUMN filePathFront TEXT;");
+    }
+    if (!currentColumns.includes('fileNameBack')) {
+      console.log('🔧 Adding fileNameBack column...');
+      db.exec("ALTER TABLE kba_submissions ADD COLUMN fileNameBack TEXT NOT NULL DEFAULT 'back';");
+    }
+    if (!currentColumns.includes('mimeTypeBack')) {
+      console.log('🔧 Adding mimeTypeBack column...');
+      db.exec("ALTER TABLE kba_submissions ADD COLUMN mimeTypeBack TEXT;");
+    }
+    if (!currentColumns.includes('filePathBack')) {
+      console.log('🔧 Adding filePathBack column...');
+      db.exec("ALTER TABLE kba_submissions ADD COLUMN filePathBack TEXT;");
+    }
+  } catch (err) {
+    console.warn('⚠️ Failed to ensure KBA schema:', err.message || err);
+  }
+}
+
+function ensureNotaryCallsSchema() {
+  try {
+    const res = db.exec("PRAGMA table_info(notary_calls);");
+    const tableExists = res && res.length > 0;
+    
+    if (!tableExists) {
+      console.log('🔧 Creating notary_calls table...');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS notary_calls (
+          id TEXT PRIMARY KEY,
+          notaryId TEXT NOT NULL,
+          notaryName TEXT NOT NULL,
+          documentId TEXT NOT NULL,
+          documentName TEXT NOT NULL,
+          ownerId TEXT NOT NULL,
+          ownerName TEXT NOT NULL,
+          sessionId TEXT,
+          callType TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'initiated',
+          amount REAL NOT NULL DEFAULT 0,
+          startedAt INTEGER,
+          completedAt INTEGER,
+          duration INTEGER,
+          createdAt INTEGER NOT NULL,
+          updatedAt INTEGER NOT NULL
+        );
+      `);
+      console.log('✅ notary_calls table created');
+    } else {
+      // Ensure all columns exist
+      const columns = (res[0]?.values || []).map((row) => row[1]);
+      
+      if (!columns.includes('callType')) {
+        db.exec("ALTER TABLE notary_calls ADD COLUMN callType TEXT NOT NULL DEFAULT 'ondemand';");
+      }
+      if (!columns.includes('amount')) {
+        db.exec("ALTER TABLE notary_calls ADD COLUMN amount REAL NOT NULL DEFAULT 0;");
+      }
+      if (!columns.includes('duration')) {
+        db.exec("ALTER TABLE notary_calls ADD COLUMN duration INTEGER;");
+      }
+      if (!columns.includes('status')) {
+        db.exec("ALTER TABLE notary_calls ADD COLUMN status TEXT NOT NULL DEFAULT 'initiated';");
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️ Failed to ensure notary_calls schema:', err.message || err);
   }
 }
 
@@ -608,12 +1000,68 @@ const normalizeRoomId = (value) => {
 };
 
 const normalizeRole = (value) => String(value || '').trim().toLowerCase();
+const normalizeKbaStatus = (value) => String(value || '').trim().toLowerCase();
 
 const AUTH_SECRET = process.env.AUTH_SECRET || 'notary-dev-auth-secret';
 const ADMIN_SEED_USER_ID = process.env.ADMIN_SEED_USER_ID || 'admin-seed-001';
 const ADMIN_SEED_USERNAME = process.env.ADMIN_SEED_USERNAME || 'admin';
 const ADMIN_SEED_EMAIL = process.env.ADMIN_SEED_EMAIL || 'admin@notary.local';
 const ADMIN_SEED_PASSWORD = process.env.ADMIN_SEED_PASSWORD || 'Admin@123';
+const SMTP_HOST = process.env.SMTP_HOST || '';
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_SECURE = String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true';
+const SMTP_USER = process.env.SMTP_USER || '';
+const SMTP_PASS = process.env.SMTP_PASS || '';
+const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || '';
+const OTP_CHANNEL_DEFAULT = process.env.OTP_CHANNEL_DEFAULT || 'email';
+const OTP_TTL_MS = Number(process.env.OTP_TTL_MS || 10 * 60 * 1000);
+const KBA_STORAGE_DIR = path.resolve(__dirname, 'data', 'kba');
+
+const KBA_STATUS = {
+  DRAFT: 'draft',
+  OTP_PENDING: 'otp_pending',
+  OTP_VERIFIED: 'otp_verified',
+  PENDING_REVIEW: 'kba_pending_review',
+  APPROVED: 'kba_approved',
+  REJECTED: 'kba_rejected',
+};
+
+function ensureKbaStorageDir() {
+  if (!fs.existsSync(KBA_STORAGE_DIR)) {
+    fs.mkdirSync(KBA_STORAGE_DIR, { recursive: true });
+  }
+}
+
+function isKbaApprovedStatus(value) {
+  return normalizeKbaStatus(value) === KBA_STATUS.APPROVED;
+}
+
+function shouldRequireKbaForRole(role) {
+  return ['owner', 'notary'].includes(normalizeRole(role));
+}
+
+function isValidEmailAddress(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+}
+
+function getSmtpTransporter() {
+  if (!nodemailer) {
+    throw new Error('nodemailer package is not installed');
+  }
+  if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS || !SMTP_FROM) {
+    throw new Error('SMTP configuration is incomplete (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM)');
+  }
+
+  return nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+  });
+}
 
 // User-related queries are executed via helper functions (dbGet/dbAll) to keep sql.js usage consistent.
 
@@ -801,6 +1249,7 @@ const createToken = (user) => {
     sub: user.username,
     userId: user.userId,
     role: user.role,
+    kbaStatus: user.kbaStatus || KBA_STATUS.DRAFT,
     iat: Date.now(),
   };
   const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
@@ -810,6 +1259,109 @@ const createToken = (user) => {
     .digest('base64url');
   return `${encodedPayload}.${signature}`;
 };
+
+const verifyAccessToken = (token) => {
+  if (!token || typeof token !== 'string') return null;
+  const [encodedPayload, signature] = token.split('.');
+  if (!encodedPayload || !signature) return null;
+
+  const expectedSignature = crypto
+    .createHmac('sha256', AUTH_SECRET)
+    .update(encodedPayload)
+    .digest('base64url');
+
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expectedSignature);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+    if (!payload?.userId || !payload?.role) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+};
+
+const readAuthToken = (req) => {
+  const authorization = String(req.headers?.authorization || '');
+  if (!authorization.startsWith('Bearer ')) return null;
+  return authorization.slice(7).trim();
+};
+
+const requireAuth = (req, res, next) => {
+  const token = readAuthToken(req);
+  const payload = verifyAccessToken(token);
+
+  if (!payload) {
+    return res.status(401).json({ error: 'Unauthorized: valid Bearer token is required' });
+  }
+
+  const user = dbGet(
+    'SELECT userId, username, email, role, otpVerified, kbaStatus, kbaApprovedAt, kbaRejectedReason, phoneNumber FROM users WHERE userId = :userId',
+    { userId: payload.userId }
+  );
+
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthorized: user no longer exists' });
+  }
+
+  req.auth = {
+    token,
+    userId: user.userId,
+    username: user.username,
+    email: user.email,
+    role: normalizeRole(user.role),
+    otpVerified: Number(user.otpVerified) === 1,
+    kbaStatus: normalizeKbaStatus(user.kbaStatus),
+    kbaApprovedAt: user.kbaApprovedAt,
+    kbaRejectedReason: user.kbaRejectedReason,
+    phoneNumber: user.phoneNumber,
+  };
+
+  return next();
+};
+
+const requireRole = (allowedRoles = []) => (req, res, next) => {
+  const currentRole = normalizeRole(req.auth?.role);
+  if (!allowedRoles.includes(currentRole)) {
+    return res.status(403).json({ error: 'Forbidden: insufficient role privileges' });
+  }
+  return next();
+};
+
+const requireKbaApproved = (req, res, next) => {
+  if (!shouldRequireKbaForRole(req.auth?.role)) return next();
+
+  if (!req.auth?.otpVerified) {
+    return res.status(403).json({ error: 'OTP verification required before continuing' });
+  }
+  if (!isKbaApprovedStatus(req.auth?.kbaStatus)) {
+    return res.status(403).json({ error: 'KBA approval required before continuing', kbaStatus: req.auth?.kbaStatus || KBA_STATUS.DRAFT });
+  }
+
+  return next();
+};
+
+const generateOtpCode = () => `${Math.floor(100000 + Math.random() * 900000)}`;
+const hashOtpCode = (code) => crypto.createHash('sha256').update(String(code)).digest('hex');
+
+async function sendOtpViaEmail({ destination, code }) {
+  const transporter = getSmtpTransporter();
+  const ttlMinutes = Math.max(1, Math.round(OTP_TTL_MS / 60000));
+
+  const result = await transporter.sendMail({
+    from: SMTP_FROM,
+    to: destination,
+    subject: 'Your Notary OTP Code',
+    text: `Your verification code is ${code}. It expires in ${ttlMinutes} minutes.`,
+    html: `<p>Your verification code is <strong>${code}</strong>.</p><p>It expires in ${ttlMinutes} minutes.</p>`,
+  });
+
+  return { messageId: result?.messageId || null };
+}
 
 const ensureSeedAdminUser = () => {
   try {
@@ -832,8 +1384,20 @@ const ensureSeedAdminUser = () => {
 
     if (!existingUser) {
       dbRun(
-        'INSERT INTO users (userId, username, email, passwordHash, role, createdAt) VALUES (:userId, :username, :email, :passwordHash, :role, :createdAt)',
-        { userId, username, email, passwordHash, role: 'admin', createdAt }
+        `INSERT INTO users (userId, username, email, passwordHash, role, createdAt, otpVerified, kbaStatus, kbaApprovedAt, kbaUpdatedAt)
+         VALUES (:userId, :username, :email, :passwordHash, :role, :createdAt, :otpVerified, :kbaStatus, :kbaApprovedAt, :kbaUpdatedAt)`,
+        {
+          userId,
+          username,
+          email,
+          passwordHash,
+          role: 'admin',
+          createdAt,
+          otpVerified: 1,
+          kbaStatus: KBA_STATUS.APPROVED,
+          kbaApprovedAt: createdAt,
+          kbaUpdatedAt: createdAt,
+        }
       );
       appendUserToJson({ userId, username, email, passwordHash, role: 'admin', createdAt });
       console.log(`✅ Seeded admin user created: ${username}`);
@@ -841,11 +1405,24 @@ const ensureSeedAdminUser = () => {
     }
 
     dbRun(
-      'UPDATE users SET role = :role, email = :email, passwordHash = :passwordHash WHERE userId = :userId',
+        `UPDATE users
+         SET role = :role,
+             email = :email,
+             passwordHash = :passwordHash,
+             otpVerified = :otpVerified,
+             kbaStatus = :kbaStatus,
+             kbaApprovedAt = COALESCE(kbaApprovedAt, :kbaApprovedAt),
+             kbaUpdatedAt = :kbaUpdatedAt,
+             kbaRejectedReason = NULL
+         WHERE userId = :userId`,
       {
         role: 'admin',
         email,
         passwordHash,
+          otpVerified: 1,
+          kbaStatus: KBA_STATUS.APPROVED,
+          kbaApprovedAt: now(),
+          kbaUpdatedAt: now(),
         userId: existingUser.userId,
       }
     );
@@ -895,15 +1472,33 @@ app.post('/api/auth/register', (req, res) => {
     console.log('Registering user:', { username, email, role });
 
     dbRun(
-      'INSERT INTO users (userId, username, email, passwordHash, role, createdAt) VALUES (:userId, :username, :email, :passwordHash, :role, :createdAt)',
-      { userId, username, email, passwordHash, role, createdAt }
+      `INSERT INTO users (userId, username, email, passwordHash, role, createdAt, otpVerified, kbaStatus, kbaUpdatedAt)
+       VALUES (:userId, :username, :email, :passwordHash, :role, :createdAt, :otpVerified, :kbaStatus, :kbaUpdatedAt)`,
+      {
+        userId,
+        username,
+        email,
+        passwordHash,
+        role,
+        createdAt,
+        otpVerified: 0,
+        kbaStatus: KBA_STATUS.DRAFT,
+        kbaUpdatedAt: createdAt,
+      }
     );
     persistDatabase();
     appendUserToJson({ userId, username, email, passwordHash, role, createdAt });
 
-    const token = createToken({ username, userId, role });
+    const token = createToken({ username, userId, role, kbaStatus: KBA_STATUS.DRAFT });
     return res.json({
-      user: { userId, username, email, role },
+      user: {
+        userId,
+        username,
+        email,
+        role,
+        otpVerified: false,
+        kbaStatus: KBA_STATUS.DRAFT,
+      },
       token,
     });
   } catch (error) {
@@ -933,19 +1528,559 @@ app.post('/api/auth/login', (req, res) => {
       return res.status(401).json({ error: 'Invalid username or password.' });
     }
 
-    const token = createToken({ username: user.username, userId: user.userId, role: user.role });
+    const token = createToken({
+      username: user.username,
+      userId: user.userId,
+      role: user.role,
+      kbaStatus: user.kbaStatus || KBA_STATUS.DRAFT,
+    });
     return res.json({
       user: {
         userId: user.userId,
         username: user.username,
         email: user.email,
         role: user.role,
+        otpVerified: Number(user.otpVerified) === 1,
+        kbaStatus: user.kbaStatus || KBA_STATUS.DRAFT,
+        kbaApprovedAt: user.kbaApprovedAt || null,
+        kbaRejectedReason: user.kbaRejectedReason || null,
       },
       token,
     });
   } catch (error) {
     console.error('Error logging in user:', error);
     res.status(500).json({ error: 'Failed to login user' });
+  }
+});
+
+app.post('/api/kba/otp/send', requireAuth, async (req, res) => {
+  try {
+    const currentUser = dbGet('SELECT otpVerified, kbaStatus FROM users WHERE userId = :userId', { userId: req.auth.userId });
+    if (currentUser && Number(currentUser.otpVerified) === 1) {
+      return res.status(400).json({ error: 'OTP already verified; cannot send another OTP' });
+    }
+    if (currentUser && String(currentUser.kbaStatus || '').toLowerCase() === KBA_STATUS.PENDING_REVIEW) {
+      return res.status(400).json({ error: 'KBA submission is pending review; cannot send OTP' });
+    }
+
+    const channel = String(req.body?.channel || OTP_CHANNEL_DEFAULT || 'email').trim().toLowerCase();
+    const destination = String(req.body?.destination || req.auth?.email || '').trim();
+
+    if (!destination) {
+      return res.status(400).json({ error: 'destination email is required' });
+    }
+
+    if (channel !== 'email') {
+      return res.status(400).json({ error: 'Only email OTP is supported' });
+    }
+
+    if (!isValidEmailAddress(destination)) {
+      return res.status(400).json({ error: 'A valid email address is required' });
+    }
+
+    const otpCode = generateOtpCode();
+    const challengeId = crypto.randomUUID();
+    const nowMs = now();
+
+    dbRun('DELETE FROM otp_challenges WHERE userId = :userId', { userId: req.auth.userId });
+    dbRun(
+      `INSERT INTO otp_challenges (id, userId, destination, channel, otpHash, expiresAt, attempts, maxAttempts, verifiedAt, createdAt)
+       VALUES (:id, :userId, :destination, :channel, :otpHash, :expiresAt, :attempts, :maxAttempts, :verifiedAt, :createdAt)`,
+      {
+        id: challengeId,
+        userId: req.auth.userId,
+        destination,
+        channel,
+        otpHash: hashOtpCode(otpCode),
+        expiresAt: nowMs + OTP_TTL_MS,
+        attempts: 0,
+        maxAttempts: 5,
+        verifiedAt: null,
+        createdAt: nowMs,
+      }
+    );
+
+    dbRun(
+      `UPDATE users
+       SET phoneNumber = :phoneNumber,
+           otpVerified = 0,
+           kbaStatus = :kbaStatus,
+           kbaUpdatedAt = :kbaUpdatedAt
+       WHERE userId = :userId`,
+      {
+        userId: req.auth.userId,
+        phoneNumber: destination,
+        kbaStatus: KBA_STATUS.OTP_PENDING,
+        kbaUpdatedAt: nowMs,
+      }
+    );
+    persistDatabase();
+
+    await sendOtpViaEmail({ destination, code: otpCode });
+
+    return res.json({
+      success: true,
+      challengeId,
+      destination,
+      channel,
+      expiresAt: nowMs + OTP_TTL_MS,
+      kbaStatus: KBA_STATUS.OTP_PENDING,
+    });
+  } catch (error) {
+    console.error('Error sending KBA OTP:', error);
+    return res.status(500).json({ error: 'Failed to send OTP' });
+  }
+});
+
+app.post('/api/kba/otp/verify', requireAuth, async (req, res) => {
+  try {
+    const user = dbGet('SELECT otpVerified FROM users WHERE userId = :userId', { userId: req.auth.userId });
+    if (user && Number(user.otpVerified) === 1) {
+      return res.status(400).json({ error: 'OTP already verified; verification cannot be repeated' });
+    }
+
+    const otpCode = String(req.body?.otp || '').trim();
+    if (!otpCode) {
+      return res.status(400).json({ error: 'otp is required' });
+    }
+
+    const challenge = dbGet(
+      `SELECT * FROM otp_challenges
+       WHERE userId = :userId
+       ORDER BY createdAt DESC
+       LIMIT 1`,
+      { userId: req.auth.userId }
+    );
+
+    if (!challenge) {
+      return res.status(404).json({ error: 'OTP challenge not found. Request a new OTP.' });
+    }
+
+    const nowMs = now();
+    if (Number(challenge.verifiedAt || 0) > 0) {
+      return res.status(400).json({ error: 'OTP already verified' });
+    }
+    if (Number(challenge.expiresAt) < nowMs) {
+      return res.status(400).json({ error: 'OTP expired. Request a new OTP.' });
+    }
+    if (Number(challenge.attempts || 0) >= Number(challenge.maxAttempts || 5)) {
+      return res.status(429).json({ error: 'Maximum OTP attempts reached. Request a new OTP.' });
+    }
+
+    const verified = hashOtpCode(otpCode) === String(challenge.otpHash || '');
+
+    if (!verified) {
+      dbRun('UPDATE otp_challenges SET attempts = attempts + 1 WHERE id = :id', { id: challenge.id });
+      persistDatabase();
+      return res.status(400).json({ error: 'Invalid OTP code' });
+    }
+
+    dbRun('UPDATE otp_challenges SET verifiedAt = :verifiedAt WHERE id = :id', {
+      id: challenge.id,
+      verifiedAt: nowMs,
+    });
+    dbRun(
+      `UPDATE users
+       SET otpVerified = 1,
+           kbaStatus = :kbaStatus,
+           kbaUpdatedAt = :kbaUpdatedAt,
+           kbaRejectedReason = NULL
+       WHERE userId = :userId`,
+      {
+        userId: req.auth.userId,
+        kbaStatus: KBA_STATUS.OTP_VERIFIED,
+        kbaUpdatedAt: nowMs,
+      }
+    );
+    persistDatabase();
+
+    return res.json({ success: true, otpVerified: true, kbaStatus: KBA_STATUS.OTP_VERIFIED });
+  } catch (error) {
+    console.error('Error verifying KBA OTP:', error);
+    return res.status(500).json({ error: 'Failed to verify OTP' });
+  }
+});
+
+app.post('/api/kba/upload', requireAuth, (req, res) => {
+  try {
+    const documentType = String(req.body?.documentType || '').trim();
+    let front = req.body?.front || {};
+    let back = req.body?.back || {};
+
+    // Backward compatibility: old client may send documentDataUrl directly.
+    if (!front.documentDataUrl && req.body?.documentDataUrl) {
+      front = {
+        fileName: String(req.body?.fileName || 'kba-document').trim(),
+        mimeType: String(req.body?.mimeType || 'application/octet-stream').trim(),
+        documentDataUrl: String(req.body?.documentDataUrl || '').trim(),
+      };
+      back = back || {};
+    }
+
+    const fileNameFront = String(front.fileName || '').trim();
+    const mimeTypeFront = String(front.mimeType || 'application/octet-stream').trim();
+    const documentDataUrlFront = String(front.documentDataUrl || '').trim();
+
+    const fileNameBack = String(back.fileName || '').trim();
+    const mimeTypeBack = String(back.mimeType || 'application/octet-stream').trim();
+    const documentDataUrlBack = String(back.documentDataUrl || '').trim();
+
+    console.log(`[KBA Upload] Validating: documentType=${documentType}, frontFile=${fileNameFront}, backFile=${fileNameBack}`);
+    console.log(`[KBA Upload] Front dataUrl length: ${documentDataUrlFront.length}, Back dataUrl length: ${documentDataUrlBack.length}`);
+
+    if (!documentType) {
+      return res.status(400).json({ error: 'documentType is required' });
+    }
+    
+    if (!fileNameFront) {
+      return res.status(400).json({ error: 'Front side: fileName is required' });
+    }
+    if (!documentDataUrlFront) {
+      return res.status(400).json({ error: 'Front side: documentDataUrl is required (file data missing)' });
+    }
+    
+    if (!fileNameBack) {
+      return res.status(400).json({ error: 'Back side: fileName is required' });
+    }
+    if (!documentDataUrlBack) {
+      return res.status(400).json({ error: 'Back side: documentDataUrl is required (file data missing)' });
+    }
+    
+    if (!req.auth?.otpVerified) {
+      return res.status(403).json({ error: 'Verify OTP before uploading KBA documents' });
+    }
+
+    const nowMs = now();
+    ensureKbaStorageDir();
+
+    const saveSide = (sideFileName, sideMimeType, sideDataUrl, sideLabel) => {
+      const ext = path.extname(sideFileName) || '.bin';
+      const safeExt = /^[.A-Za-z0-9_-]+$/.test(ext) ? ext : '.bin';
+      const outPath = path.join(KBA_STORAGE_DIR, `${req.auth.userId}-${sideLabel}-${nowMs}${safeExt}`);
+      const base64Payload = sideDataUrl.includes(',') ? sideDataUrl.split(',')[1] : sideDataUrl;
+      const buffer = Buffer.from(base64Payload, 'base64');
+      fs.writeFileSync(outPath, buffer);
+      return { outPath, fileSize: buffer.length };
+    };
+
+    const frontSave = saveSide(fileNameFront, mimeTypeFront, documentDataUrlFront, 'front');
+    const backSave = saveSide(fileNameBack, mimeTypeBack, documentDataUrlBack, 'back');
+
+    dbRun(
+      `INSERT INTO kba_submissions (userId, documentType, fileNameFront, mimeTypeFront, filePathFront, fileNameBack, mimeTypeBack, filePathBack, submittedAt, status, rejectionReason, reviewedAt, reviewedBy, metadata)
+       VALUES (:userId, :documentType, :fileNameFront, :mimeTypeFront, :filePathFront, :fileNameBack, :mimeTypeBack, :filePathBack, :submittedAt, :status, :rejectionReason, :reviewedAt, :reviewedBy, :metadata)
+       ON CONFLICT(userId) DO UPDATE SET
+         documentType = excluded.documentType,
+         fileNameFront = excluded.fileNameFront,
+         mimeTypeFront = excluded.mimeTypeFront,
+         filePathFront = excluded.filePathFront,
+         fileNameBack = excluded.fileNameBack,
+         mimeTypeBack = excluded.mimeTypeBack,
+         filePathBack = excluded.filePathBack,
+         submittedAt = excluded.submittedAt,
+         status = excluded.status,
+         rejectionReason = excluded.rejectionReason,
+         reviewedAt = excluded.reviewedAt,
+         reviewedBy = excluded.reviewedBy,
+         metadata = excluded.metadata`,
+      {
+        userId: req.auth.userId,
+        documentType,
+        fileNameFront,
+        mimeTypeFront,
+        filePathFront: frontSave.outPath,
+        fileNameBack,
+        mimeTypeBack,
+        filePathBack: backSave.outPath,
+        submittedAt: nowMs,
+        status: KBA_STATUS.PENDING_REVIEW,
+        rejectionReason: null,
+        reviewedAt: null,
+        reviewedBy: null,
+        metadata: JSON.stringify({ frontSize: frontSave.fileSize, backSize: backSave.fileSize }),
+      }
+    );
+
+    dbRun(
+      `UPDATE users
+       SET kbaStatus = :kbaStatus,
+           kbaRejectedReason = NULL,
+           kbaUpdatedAt = :kbaUpdatedAt
+       WHERE userId = :userId`,
+      {
+        userId: req.auth.userId,
+        kbaStatus: KBA_STATUS.PENDING_REVIEW,
+        kbaUpdatedAt: nowMs,
+      }
+    );
+
+    persistDatabase();
+
+    console.log(`[KBA Upload] Documents successfully stored for user ${req.auth.userId}`);
+
+    return res.json({
+      success: true,
+      kbaStatus: KBA_STATUS.PENDING_REVIEW,
+      submittedAt: nowMs,
+      documentType,
+      fileNameFront,
+      fileNameBack,
+    });
+  } catch (error) {
+    console.error('Error uploading KBA document:', error);
+    return res.status(500).json({ error: 'Failed to upload KBA document' });
+  }
+});
+
+app.get('/api/kba/status', requireAuth, (req, res) => {
+  try {
+    const submission = dbGet('SELECT * FROM kba_submissions WHERE userId = :userId', { userId: req.auth.userId });
+    const user = dbGet(
+      'SELECT userId, username, role, otpVerified, kbaStatus, kbaApprovedAt, kbaRejectedReason, kbaUpdatedAt, phoneNumber FROM users WHERE userId = :userId',
+      { userId: req.auth.userId }
+    );
+
+    return res.json({
+      user,
+      submission: submission
+        ? {
+            userId: submission.userId,
+            documentType: submission.documentType,
+            fileNameFront: submission.fileNameFront || submission.fileName,
+            mimeTypeFront: submission.mimeTypeFront || submission.mimeType,
+            fileNameBack: submission.fileNameBack || null,
+            mimeTypeBack: submission.mimeTypeBack || null,
+            submittedAt: submission.submittedAt,
+            status: submission.status,
+            rejectionReason: submission.rejectionReason,
+            reviewedAt: submission.reviewedAt,
+            reviewedBy: submission.reviewedBy,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error('Error fetching KBA status:', error);
+    return res.status(500).json({ error: 'Failed to fetch KBA status' });
+  }
+});
+
+app.post('/api/kba/cancel', requireAuth, (req, res) => {
+  try {
+    const nowMs = now();
+    dbRun(
+      `UPDATE users
+       SET kbaStatus = :kbaStatus,
+           kbaRejectedReason = NULL,
+           kbaUpdatedAt = :kbaUpdatedAt
+       WHERE userId = :userId`,
+      {
+        userId: req.auth.userId,
+        kbaStatus: KBA_STATUS.DRAFT,
+        kbaUpdatedAt: nowMs,
+      }
+    );
+
+    dbRun('DELETE FROM kba_submissions WHERE userId = :userId', { userId: req.auth.userId });
+    persistDatabase();
+
+    return res.json({ success: true, userId: req.auth.userId, kbaStatus: KBA_STATUS.DRAFT });
+  } catch (error) {
+    console.error('Error cancelling KBA:', error);
+    return res.status(500).json({ error: 'Failed to cancel KBA' });
+  }
+});
+
+app.get('/api/admin/kba/pending', requireAuth, requireRole(['admin']), (req, res) => {
+  try {
+    const items = dbAll(
+      `SELECT u.userId, u.username, u.email, u.role, u.kbaStatus, u.kbaUpdatedAt,
+              s.documentType,
+              s.fileNameFront, s.mimeTypeFront, s.filePathFront,
+              s.fileNameBack, s.mimeTypeBack, s.filePathBack,
+              s.submittedAt, s.status, s.rejectionReason
+       FROM users u
+       LEFT JOIN kba_submissions s ON s.userId = u.userId
+       WHERE u.kbaStatus IN (:pendingStatus, :rejectedStatus)
+       ORDER BY COALESCE(s.submittedAt, u.kbaUpdatedAt) DESC`,
+      {
+        pendingStatus: KBA_STATUS.PENDING_REVIEW,
+        rejectedStatus: KBA_STATUS.REJECTED,
+      }
+    );
+    return res.json(items);
+  } catch (error) {
+    console.error('Error fetching pending KBA requests:', error);
+    return res.status(500).json({ error: 'Failed to fetch pending KBA requests' });
+  }
+});
+
+app.get('/api/admin/kba/:userId/document', requireAuth, requireRole(['admin']), (req, res) => {
+  try {
+    const { userId } = req.params;
+    const side = String(req.query.side || 'front').toLowerCase();
+
+    console.log(`[KBA Document] Admin ${req.auth.userId} requesting ${side} document for user ${userId}`);
+
+    const submission = dbGet(
+      'SELECT filePathFront, mimeTypeFront, fileNameFront, filePathBack, mimeTypeBack, fileNameBack FROM kba_submissions WHERE userId = :userId',
+      { userId }
+    );
+
+    if (!submission) {
+      console.log(`[KBA Document] No submission found for user ${userId}`);
+      return res.status(404).json({ error: 'KBA submission not found' });
+    }
+
+    let filePath = side === 'back' ? submission.filePathBack : submission.filePathFront;
+    let mimeType = side === 'back' ? submission.mimeTypeBack : submission.mimeTypeFront;
+    let fileName = side === 'back' ? submission.fileNameBack : submission.fileNameFront;
+
+    // compatibility with old schema for existing rows
+    if (!filePath && side === 'front' && submission.filePath) {
+      filePath = submission.filePath;
+      mimeType = submission.mimeType;
+      fileName = submission.fileName;
+    }
+
+    if (!filePath) {
+      console.log(`[KBA Document] Submission found but filePath ${side} is null for user ${userId}`);
+      return res.status(404).json({ error: `KBA ${side} document file path not stored` });
+    }
+
+    if (!fs.existsSync(filePath)) {
+      console.log(`[KBA Document] File does not exist at path: ${filePath}`);
+      return res.status(404).json({ error: `Document file not found: ${filePath}` });
+    }
+
+    const buffer = fs.readFileSync(filePath);
+    const finalMimeType = mimeType || 'application/octet-stream';
+    const finalFileName = fileName || `kba-document-${side}`;
+
+    console.log(`[KBA Document] Sending ${side} document ${finalFileName} (${buffer.length} bytes)`);
+
+    res.setHeader('Content-Type', finalMimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${finalFileName}"`);
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    return res.send(buffer);
+  } catch (error) {
+    console.error('Error retrieving KBA document:', error);
+    return res.status(500).json({ error: `Failed to retrieve KBA document: ${error.message}` });
+  }
+});
+
+app.put('/api/admin/kba/:userId/approve', requireAuth, requireRole(['admin']), (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = dbGet('SELECT userId, role FROM users WHERE userId = :userId', { userId });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const nowMs = now();
+    dbRun(
+      `UPDATE users
+       SET otpVerified = 1,
+           kbaStatus = :kbaStatus,
+           kbaApprovedAt = :kbaApprovedAt,
+           kbaRejectedReason = NULL,
+           kbaUpdatedAt = :kbaUpdatedAt
+       WHERE userId = :userId`,
+      {
+        userId,
+        kbaStatus: KBA_STATUS.APPROVED,
+        kbaApprovedAt: nowMs,
+        kbaUpdatedAt: nowMs,
+      }
+    );
+    dbRun(
+      `UPDATE kba_submissions
+       SET status = :status,
+           rejectionReason = NULL,
+           reviewedAt = :reviewedAt,
+           reviewedBy = :reviewedBy
+       WHERE userId = :userId`,
+      {
+        userId,
+        status: KBA_STATUS.APPROVED,
+        reviewedAt: nowMs,
+        reviewedBy: req.auth.userId,
+      }
+    );
+    persistDatabase();
+
+    return res.json({ success: true, userId, kbaStatus: KBA_STATUS.APPROVED, approvedAt: nowMs });
+  } catch (error) {
+    console.error('Error approving KBA:', error);
+    return res.status(500).json({ error: 'Failed to approve KBA' });
+  }
+});
+
+app.put('/api/admin/kba/:userId/reject', requireAuth, requireRole(['admin']), (req, res) => {
+  try {
+    const { userId } = req.params;
+    const reason = String(req.body?.reason || '').trim() || 'KBA documents could not be verified';
+    const user = dbGet('SELECT userId FROM users WHERE userId = :userId', { userId });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const nowMs = now();
+    dbRun(
+      `UPDATE users
+       SET kbaStatus = :kbaStatus,
+           kbaRejectedReason = :kbaRejectedReason,
+           kbaUpdatedAt = :kbaUpdatedAt
+       WHERE userId = :userId`,
+      {
+        userId,
+        kbaStatus: KBA_STATUS.REJECTED,
+        kbaRejectedReason: reason,
+        kbaUpdatedAt: nowMs,
+      }
+    );
+    dbRun(
+      `UPDATE kba_submissions
+       SET status = :status,
+           rejectionReason = :rejectionReason,
+           reviewedAt = :reviewedAt,
+           reviewedBy = :reviewedBy
+       WHERE userId = :userId`,
+      {
+        userId,
+        status: KBA_STATUS.REJECTED,
+        rejectionReason: reason,
+        reviewedAt: nowMs,
+        reviewedBy: req.auth.userId,
+      }
+    );
+    persistDatabase();
+
+    return res.json({ success: true, userId, kbaStatus: KBA_STATUS.REJECTED, reason });
+  } catch (error) {
+    console.error('Error rejecting KBA:', error);
+    return res.status(500).json({ error: 'Failed to reject KBA' });
+  }
+});
+
+app.get('/api/debug/kba-submissions', requireAuth, requireRole(['admin']), (req, res) => {
+  try {
+    const submissions = dbAll(`SELECT userId, documentType, fileName, mimeType, filePath, submittedAt, status FROM kba_submissions`);
+    
+    // Check if files actually exist
+    const withFileStatus = submissions.map(s => ({
+      ...s,
+      fileExists: s.filePath ? fs.existsSync(s.filePath) : false,
+    }));
+    
+    return res.json({ 
+      submissions: withFileStatus || [], 
+      message: 'All KBA submissions in database',
+      storageDir: KBA_STORAGE_DIR,
+      storageDirExists: fs.existsSync(KBA_STORAGE_DIR),
+    });
+  } catch (error) {
+    console.error('Error fetching KBA submissions:', error);
+    return res.status(500).json({ error: 'Failed to fetch submissions' });
   }
 });
 
@@ -1709,12 +2844,15 @@ app.put('/api/documents/:id/review', (req, res) => {
 });
 
 // Mark an owner document as fully notarized (after session completion)
-app.put('/api/owner-documents/:id/notarize', (req, res) => {
+app.put('/api/owner-documents/:id/notarize', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
-    const { notaryName, notarizedDataUrl } = req.body;
+    const { notaryName, notarizedDataUrl, sessionAmount } = req.body;
 
     const nowMs = now();
+    const parsedAmount = Number(sessionAmount);
+    const normalizedAmount = Number.isFinite(parsedAmount) && parsedAmount >= 0 ? Number(parsedAmount.toFixed(2)) : 0;
+    const paymentRequired = normalizedAmount > 0;
 
     // If a notarized PDF is provided, save it to disk and store path in DB.
     let notarizedPath = null;
@@ -1738,22 +2876,38 @@ app.put('/api/owner-documents/:id/notarize', (req, res) => {
       `
       UPDATE owner_documents
       SET status = :status,
-          inProcess = 0,
-          notarized = 1,
+          inProcess = :inProcess,
+          notarized = :notarized,
           notarizedAt = :notarizedAt,
           notaryReview = 'accepted',
           notaryName = :notaryName,
           notarizedDataUrl = :notarizedDataUrl,
-          notarizedPath = :notarizedPath
+          notarizedPath = :notarizedPath,
+          sessionAmount = :sessionAmount,
+          paymentStatus = :paymentStatus,
+          paymentRequestedAt = :paymentRequestedAt,
+          paymentRequestedBy = :paymentRequestedBy,
+          paymentPaidAt = :paymentPaidAt,
+          paymentTransactionId = :paymentTransactionId,
+          paymentMethod = :paymentMethod
       WHERE id = :id
     `,
       {
         id,
-        status: 'notarized',
-        notarizedAt: nowMs,
+        status: paymentRequired ? 'payment_pending' : 'notarized',
+        inProcess: paymentRequired ? 1 : 0,
+        notarized: paymentRequired ? 0 : 1,
+        notarizedAt: paymentRequired ? null : nowMs,
         notaryName: notaryName || 'Unknown Notary',
         notarizedDataUrl: notarizedDataUrl || null,
         notarizedPath,
+        sessionAmount: normalizedAmount,
+        paymentStatus: paymentRequired ? 'pending' : 'not_required',
+        paymentRequestedAt: paymentRequired ? nowMs : null,
+        paymentRequestedBy: paymentRequired ? req.auth.userId : null,
+        paymentPaidAt: null,
+        paymentTransactionId: null,
+        paymentMethod: null,
       }
     );
     persistDatabase();
@@ -1763,8 +2917,39 @@ app.put('/api/owner-documents/:id/notarize', (req, res) => {
       return res.status(404).json({ error: 'Owner document not found' });
     }
 
+    // Record the notary call
+    try {
+      const callId = crypto.randomUUID();
+      dbRun(
+        `INSERT INTO notary_calls 
+         (id, notaryId, notaryName, documentId, documentName, ownerId, ownerName, sessionId, callType, status, amount, startedAt, completedAt, createdAt, updatedAt)
+         VALUES (:id, :notaryId, :notaryName, :documentId, :documentName, :ownerId, :ownerName, :sessionId, :callType, :status, :amount, :startedAt, :completedAt, :createdAt, :updatedAt)`,
+        {
+          id: callId,
+          notaryId: req.auth.userId,
+          notaryName: notaryName || req.auth.username || 'Unknown Notary',
+          documentId: document.id,
+          documentName: document.name,
+          ownerId: document.ownerId,
+          ownerName: document.ownerName,
+          sessionId: document.sessionId,
+          callType: document.scheduledAt ? 'scheduled' : 'ondemand',
+          status: 'completed',
+          amount: normalizedAmount,
+          startedAt: null,
+          completedAt: nowMs,
+          createdAt: nowMs,
+          updatedAt: nowMs
+        }
+      );
+      persistDatabase();
+    } catch (callRecordErr) {
+      console.warn('⚠️ Failed to record notary call:', callRecordErr?.message || callRecordErr);
+    }
+
     io.emit('documentNotarized', {
       id: document.id,
+      documentId: document.id,
       sessionId: document.sessionId,
       ownerId: document.ownerId,
       ownerName: document.ownerName,
@@ -1774,10 +2959,26 @@ app.put('/api/owner-documents/:id/notarize', (req, res) => {
       uploadedAt: document.uploadedAt,
       notarized: Boolean(document.notarized),
       status: document.status,
+      sessionAmount: Number(document.sessionAmount || 0),
+      paymentStatus: document.paymentStatus || 'not_required',
+      paymentRequestedAt: document.paymentRequestedAt,
+      paymentPaidAt: document.paymentPaidAt,
       notaryReview: document.notaryReview,
       notaryReviewedAt: document.notaryReviewedAt,
       notaryName: document.notaryName,
     });
+
+    if (paymentRequired) {
+      io.emit('documentPaymentRequested', {
+        documentId: document.id,
+        sessionId: document.sessionId,
+        ownerId: document.ownerId,
+        sessionAmount: Number(document.sessionAmount || 0),
+        paymentStatus: document.paymentStatus || 'pending',
+        paymentRequestedAt: document.paymentRequestedAt,
+        notaryName: document.notaryName,
+      });
+    }
 
     res.json(document);
   } catch (error) {
@@ -1787,7 +2988,7 @@ app.put('/api/owner-documents/:id/notarize', (req, res) => {
 });
 
 // Owner document endpoints (stored separately from session documents)
-app.post('/api/owner-documents', (req, res) => {
+app.post('/api/owner-documents', requireAuth, requireRole(['owner']), requireKbaApproved, (req, res) => {
   try {
     const {
       id,
@@ -1804,8 +3005,12 @@ app.post('/api/owner-documents', (req, res) => {
 
     const safeOwnerName = String(ownerName || '').trim() || 'Owner';
 
-    if (!id || !ownerId || !name) {
-      return res.status(400).json({ error: 'Missing required fields: id, ownerId, name' });
+    if (!id || !name) {
+      return res.status(400).json({ error: 'Missing required fields: id, name' });
+    }
+
+    if (ownerId && String(ownerId) !== String(req.auth.userId)) {
+      return res.status(403).json({ error: 'Owner mismatch: cannot create a document for another user' });
     }
 
     const nowMs = now();
@@ -1818,8 +3023,8 @@ app.post('/api/owner-documents', (req, res) => {
 
     dbRun(
       `
-      INSERT INTO owner_documents (id, ownerId, ownerName, sessionId, name, size, type, dataUrl, uploadedAt, inProcess, notarized, notarizedAt, notaryId, notaryName, notaryReview, notaryReviewedAt, status)
-      VALUES (:id, :ownerId, :ownerName, :sessionId, :name, :size, :type, :dataUrl, :uploadedAt, :inProcess, :notarized, :notarizedAt, :notaryId, :notaryName, :notaryReview, :notaryReviewedAt, :status)
+      INSERT INTO owner_documents (id, ownerId, ownerName, sessionId, name, size, type, dataUrl, uploadedAt, inProcess, notarized, notarizedAt, notaryId, notaryName, notaryReview, notaryReviewedAt, status, sessionAmount, paymentStatus, paymentRequestedAt, paymentRequestedBy, paymentPaidAt, paymentTransactionId, paymentMethod)
+      VALUES (:id, :ownerId, :ownerName, :sessionId, :name, :size, :type, :dataUrl, :uploadedAt, :inProcess, :notarized, :notarizedAt, :notaryId, :notaryName, :notaryReview, :notaryReviewedAt, :status, :sessionAmount, :paymentStatus, :paymentRequestedAt, :paymentRequestedBy, :paymentPaidAt, :paymentTransactionId, :paymentMethod)
       ON CONFLICT(id) DO UPDATE SET
         ownerId = excluded.ownerId,
         ownerName = excluded.ownerName,
@@ -1836,11 +3041,18 @@ app.post('/api/owner-documents', (req, res) => {
         notaryName = excluded.notaryName,
         notaryReview = excluded.notaryReview,
         notaryReviewedAt = excluded.notaryReviewedAt,
-        status = excluded.status
+        status = excluded.status,
+        sessionAmount = excluded.sessionAmount,
+        paymentStatus = excluded.paymentStatus,
+        paymentRequestedAt = excluded.paymentRequestedAt,
+        paymentRequestedBy = excluded.paymentRequestedBy,
+        paymentPaidAt = excluded.paymentPaidAt,
+        paymentTransactionId = excluded.paymentTransactionId,
+        paymentMethod = excluded.paymentMethod
     `,
       {
         id,
-        ownerId,
+        ownerId: req.auth.userId,
         ownerName: safeOwnerName,
         sessionId: sessionId || null,
         name,
@@ -1856,6 +3068,13 @@ app.post('/api/owner-documents', (req, res) => {
         notaryReview: normalizedStatus === 'pending_review' ? 'pending' : normalizedStatus === 'accepted' ? 'accepted' : 'pending',
         notaryReviewedAt: null,
         status: normalizedStatus,
+        sessionAmount: 0,
+        paymentStatus: 'not_required',
+        paymentRequestedAt: null,
+        paymentRequestedBy: null,
+        paymentPaidAt: null,
+        paymentTransactionId: null,
+        paymentMethod: null,
       }
     );
     persistDatabase();
@@ -1894,9 +3113,11 @@ app.post('/api/owner-documents', (req, res) => {
   }
 });
 
-app.get('/api/owner-documents', (req, res) => {
+app.get('/api/owner-documents', requireAuth, (req, res) => {
   try {
     const { ownerId, sessionId, inProcess, notarized, status } = req.query;
+    const currentRole = normalizeRole(req.auth?.role);
+    const forcedOwnerId = currentRole === 'owner' ? req.auth.userId : ownerId;
 
     const inProcessFilter = inProcess === undefined ? null : (inProcess === '1' || inProcess === 'true' ? 1 : 0);
     const notarizedFilter = notarized === undefined ? null : (notarized === '1' || notarized === 'true' ? 1 : 0);
@@ -1911,7 +3132,7 @@ app.get('/api/owner-documents', (req, res) => {
          AND (:status IS NULL OR status = :status)
        ORDER BY uploadedAt DESC`,
       {
-        ownerId: ownerId || null,
+        ownerId: forcedOwnerId || null,
         sessionId: sessionId || null,
         inProcess: inProcessFilter,
         notarized: notarizedFilter,
@@ -1926,12 +3147,15 @@ app.get('/api/owner-documents', (req, res) => {
   }
 });
 
-app.get('/api/owner-documents/:id', (req, res) => {
+app.get('/api/owner-documents/:id', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
     const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!document) {
       return res.status(404).json({ error: 'Owner document not found' });
+    }
+    if (normalizeRole(req.auth?.role) === 'owner' && String(document.ownerId || '') !== String(req.auth.userId)) {
+      return res.status(403).json({ error: 'Forbidden: you can only access your own documents' });
     }
     res.json(document);
   } catch (error) {
@@ -1940,12 +3164,15 @@ app.get('/api/owner-documents/:id', (req, res) => {
   }
 });
 
-app.get('/api/owner-documents/:id/notarized', (req, res) => {
+app.get('/api/owner-documents/:id/notarized', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
     const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!document) {
       return res.status(404).json({ error: 'Owner document not found' });
+    }
+    if (normalizeRole(req.auth?.role) === 'owner' && String(document.ownerId || '') !== String(req.auth.userId)) {
+      return res.status(403).json({ error: 'Forbidden: you can only access your own documents' });
     }
 
     const filePath = document.notarizedPath;
@@ -1967,13 +3194,17 @@ app.get('/api/owner-documents/:id/notarized', (req, res) => {
   }
 });
 
-app.delete('/api/owner-documents/:id', (req, res) => {
+app.delete('/api/owner-documents/:id', requireAuth, requireRole(['owner']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
     const existing = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
 
     if (!existing) {
       return res.status(404).json({ error: 'Owner document not found' });
+    }
+
+    if (String(existing.ownerId || '') !== String(req.auth.userId)) {
+      return res.status(403).json({ error: 'Forbidden: you can only delete your own documents' });
     }
 
     dbRun('DELETE FROM owner_documents WHERE id = :id', { id });
@@ -1993,7 +3224,7 @@ app.delete('/api/owner-documents/:id', (req, res) => {
   }
 });
 
-app.put('/api/owner-documents/:id/session-started', (req, res) => {
+app.put('/api/owner-documents/:id/session-started', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
     const { sessionId, notaryName, notaryUserId } = req.body || {};
@@ -2047,7 +3278,7 @@ app.put('/api/owner-documents/:id/session-started', (req, res) => {
   }
 });
 
-app.put('/api/owner-documents/:id/session-ended', (req, res) => {
+app.put('/api/owner-documents/:id/session-ended', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
     const { sessionId, notaryName, notaryUserId } = req.body || {};
@@ -2057,9 +3288,50 @@ app.put('/api/owner-documents/:id/session-ended', (req, res) => {
       return res.status(404).json({ error: 'Owner document not found' });
     }
 
+    const amountDue = Number(existing.sessionAmount || 0);
+    const paymentStatus = String(existing.paymentStatus || 'not_required').trim().toLowerCase();
+    if (amountDue > 0 && paymentStatus !== 'paid') {
+      return res.status(409).json({
+        error: 'Owner payment is pending. End session is blocked until payment is completed.',
+        paymentRequired: true,
+        paymentStatus,
+        amountDue,
+      });
+    }
+
     let document = existing;
 
-    if (String(existing.status || '').trim().toLowerCase() !== 'notarized' && !existing.notarized) {
+    const currentStatus = String(existing.status || '').trim().toLowerCase();
+    if (currentStatus === 'payment_pending' && paymentStatus === 'paid') {
+      const nowMs = now();
+      dbRun(
+        `
+        UPDATE owner_documents
+        SET status = :status,
+            inProcess = :inProcess,
+            notarized = :notarized,
+            notarizedAt = :notarizedAt,
+            notaryReview = :notaryReview,
+            notaryReviewedAt = :notaryReviewedAt,
+            notaryName = :notaryName,
+            notaryId = :notaryId
+        WHERE id = :id
+      `,
+        {
+          id,
+          status: 'notarized',
+          inProcess: 0,
+          notarized: 1,
+          notarizedAt: nowMs,
+          notaryReview: 'accepted',
+          notaryReviewedAt: nowMs,
+          notaryName: notaryName || existing.notaryName || 'Unknown Notary',
+          notaryId: notaryUserId || existing.notaryId || null,
+        }
+      );
+      persistDatabase();
+      document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+    } else if (currentStatus !== 'notarized' && !existing.notarized) {
       const nowMs = now();
       dbRun(
         `
@@ -2104,6 +3376,8 @@ app.put('/api/owner-documents/:id/session-ended', (req, res) => {
       documentId: document.id,
       sessionId: document.sessionId || sessionId || null,
       status: document.status,
+      sessionAmount: Number(document.sessionAmount || 0),
+      paymentStatus: document.paymentStatus || 'not_required',
       notaryName: document.notaryName || notaryName || 'Unknown Notary',
       notaryUserId: document.notaryId || notaryUserId || null,
       endedAt: new Date().toISOString(),
@@ -2115,7 +3389,7 @@ app.put('/api/owner-documents/:id/session-ended', (req, res) => {
     res.status(500).json({ error: 'Failed to end session' });
   }
 });
-app.put('/api/owner-documents/:id/review', (req, res) => {
+app.put('/api/owner-documents/:id/review', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
     const { notaryReview, notaryName } = req.body;
@@ -2139,6 +3413,7 @@ app.put('/api/owner-documents/:id/review', (req, res) => {
       SET notaryReview = :notaryReview,
           notaryReviewedAt = :notaryReviewedAt,
           notaryName = :notaryName,
+          scheduledAt = CASE WHEN :status = 'accepted' THEN scheduledAt ELSE NULL END,
           status = :status,
           inProcess = :inProcess,
           notarized = :notarized,
@@ -2165,6 +3440,37 @@ app.put('/api/owner-documents/:id/review', (req, res) => {
 
     console.log(`✅ Owner document ${id} reviewed as ${notaryReview} by ${notaryName}`);
 
+    // Record call initiation when accepted
+    if (notaryReview === 'accepted') {
+      try {
+        const callId = crypto.randomUUID();
+        dbRun(
+          `INSERT INTO notary_calls 
+           (id, notaryId, notaryName, documentId, documentName, ownerId, ownerName, sessionId, callType, status, amount, startedAt, createdAt, updatedAt)
+           VALUES (:id, :notaryId, :notaryName, :documentId, :documentName, :ownerId, :ownerName, :sessionId, :callType, :status, :amount, :startedAt, :createdAt, :updatedAt)`,
+          {
+            id: callId,
+            notaryId: req.auth.userId,
+            notaryName: notaryName || req.auth.username || 'Unknown Notary',
+            documentId: document.id,
+            documentName: document.name,
+            ownerId: document.ownerId,
+            ownerName: document.ownerName,
+            sessionId: document.sessionId,
+            callType: document.scheduledAt ? 'scheduled' : 'ondemand',
+            status: 'initiated',
+            amount: document.sessionAmount || 0,
+            startedAt: nowMs,
+            createdAt: nowMs,
+            updatedAt: nowMs
+          }
+        );
+        persistDatabase();
+      } catch (callRecordErr) {
+        console.warn('⚠️ Failed to record notary call on review:', callRecordErr?.message || callRecordErr);
+      }
+    }
+
     io.emit('documentReviewUpdated', {
       id,
       documentId: id,
@@ -2173,6 +3479,7 @@ app.put('/api/owner-documents/:id/review', (req, res) => {
       notaryReview,
       notaryName,
       notaryReviewedAt: document.notaryReviewedAt,
+      scheduledAt: document.scheduledAt,
       status: document.status,
     });
 
@@ -2183,20 +3490,259 @@ app.put('/api/owner-documents/:id/review', (req, res) => {
   }
 });
 
+app.put('/api/owner-documents/:id/pay', requireAuth, requireRole(['owner']), requireKbaApproved, (req, res) => {
+  try {
+    const { id } = req.params;
+    const { transactionId, paymentMethod } = req.body || {};
+
+    const existing = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+    if (!existing) {
+      return res.status(404).json({ error: 'Owner document not found' });
+    }
+    if (String(existing.ownerId || '') !== String(req.auth.userId)) {
+      return res.status(403).json({ error: 'Forbidden: you can only pay for your own document sessions' });
+    }
+
+    const amountDue = Number(existing.sessionAmount || 0);
+    if (amountDue <= 0) {
+      return res.status(400).json({ error: 'No payment is required for this session' });
+    }
+
+    const currentPaymentStatus = String(existing.paymentStatus || '').trim().toLowerCase();
+    if (currentPaymentStatus === 'paid') {
+      return res.json(existing);
+    }
+
+    const nowMs = now();
+    dbRun(
+      `
+      UPDATE owner_documents
+      SET paymentStatus = :paymentStatus,
+          paymentPaidAt = :paymentPaidAt,
+          paymentTransactionId = :paymentTransactionId,
+          paymentMethod = :paymentMethod
+      WHERE id = :id
+    `,
+      {
+        id,
+        paymentStatus: 'paid',
+        paymentPaidAt: nowMs,
+        paymentTransactionId: String(transactionId || `local-${nowMs}`).trim(),
+        paymentMethod: String(paymentMethod || 'local_mock').trim(),
+      }
+    );
+    persistDatabase();
+
+    const updated = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+
+    io.emit('ownerPaymentCompleted', {
+      documentId: updated.id,
+      sessionId: updated.sessionId,
+      ownerId: updated.ownerId,
+      amountPaid: Number(updated.sessionAmount || 0),
+      paymentStatus: updated.paymentStatus || 'paid',
+      paymentPaidAt: updated.paymentPaidAt,
+      paymentTransactionId: updated.paymentTransactionId,
+    });
+
+    return res.json(updated);
+  } catch (error) {
+    console.error('Error processing owner session payment:', error);
+    return res.status(500).json({ error: 'Failed to process payment' });
+  }
+});
+
+app.put('/api/owner-documents/:id/schedule', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { scheduledAt } = req.body || {};
+
+    const existing = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+    if (!existing) {
+      return res.status(404).json({ error: 'Owner document not found' });
+    }
+
+    const status = String(existing.status || '').trim().toLowerCase();
+    if (status !== 'accepted') {
+      return res.status(400).json({ error: 'Only accepted documents can be scheduled' });
+    }
+
+    const scheduledAtMs = new Date(scheduledAt).getTime();
+    if (!Number.isFinite(scheduledAtMs)) {
+      return res.status(400).json({ error: 'Invalid scheduledAt value' });
+    }
+
+    dbRun(
+      `
+      UPDATE owner_documents
+      SET scheduledAt = :scheduledAt,
+          inProcess = 1,
+          status = :status,
+          notarized = 0,
+          notaryReview = :notaryReview
+      WHERE id = :id
+    `,
+      {
+        id,
+        scheduledAt: scheduledAtMs,
+        status: 'accepted',
+        notaryReview: existing.notaryReview || 'accepted',
+      }
+    );
+    persistDatabase();
+
+    const updated = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+    if (!updated) {
+      return res.status(404).json({ error: 'Owner document not found after update' });
+    }
+
+    io.emit('documentReviewUpdated', {
+      id: updated.id,
+      documentId: updated.id,
+      sessionId: updated.sessionId,
+      ownerId: updated.ownerId,
+      notaryReview: updated.notaryReview || 'accepted',
+      notaryName: updated.notaryName || 'Unknown Notary',
+      notaryReviewedAt: updated.notaryReviewedAt,
+      status: updated.status,
+      scheduledAt: updated.scheduledAt,
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('Error scheduling owner document meeting:', error);
+    res.status(500).json({ error: 'Failed to schedule owner document meeting' });
+  }
+});
+
+// Notary Dashboard Statistics
+app.get('/api/notary/dashboard/stats', requireAuth, requireRole(['notary']), (req, res) => {
+  try {
+    const notaryId = req.auth?.userId;
+    if (!notaryId) {
+      return res.status(400).json({ error: 'Notary ID not found' });
+    }
+
+    // Total completed calls (documents notarized/completed)
+    const completedCallsResult = dbGet(
+      `SELECT COUNT(*) as count FROM owner_documents 
+       WHERE notaryId = :notaryId AND (status = 'notarized' OR notaryReview = 'accepted')`,
+      { notaryId }
+    );
+    const totalCompletedCalls = completedCallsResult?.count || 0;
+
+    // On-demand calls (without schedule)
+    const onDemandCallsResult = dbGet(
+      `SELECT COUNT(*) as count FROM owner_documents 
+       WHERE notaryId = :notaryId AND (scheduledAt IS NULL OR scheduledAt = 0) AND inProcess = 0`,
+      { notaryId }
+    );
+    const onDemandCalls = onDemandCallsResult?.count || 0;
+
+    // Scheduled calls (with future schedule and not yet started)
+    const scheduledCallsResult = dbGet(
+      `SELECT COUNT(*) as count FROM owner_documents 
+       WHERE notaryId = :notaryId AND scheduledAt IS NOT NULL AND scheduledAt > :now AND status IN ('accepted', 'session_started')`,
+      { notaryId, now: Date.now() }
+    );
+    const scheduledCalls = scheduledCallsResult?.count || 0;
+
+    // Total transactions amount
+    const transactionsResult = dbGet(
+      `SELECT COALESCE(SUM(sessionAmount), 0) as totalAmount FROM owner_documents 
+       WHERE notaryId = :notaryId AND sessionAmount > 0`,
+      { notaryId }
+    );
+    const totalTransactionAmount = transactionsResult?.totalAmount || 0;
+
+    // Transaction history
+    const transactions = dbAll(
+      `SELECT
+         id,
+         name as documentName,
+         ownerId,
+         ownerName,
+         sessionAmount,
+         status,
+         notarizedAt,
+         uploadedAt,
+         paymentStatus,
+         paymentPaidAt
+       FROM owner_documents
+       WHERE notaryId = :notaryId AND sessionAmount > 0
+       ORDER BY uploadedAt DESC
+       LIMIT 50`,
+      { notaryId }
+    ).map(doc => ({
+      id: doc.id,
+      documentId: doc.id,
+      documentName: doc.documentName,
+      ownerName: doc.ownerName,
+      amount: doc.sessionAmount,
+      status: doc.status,
+      date: doc.notarizedAt || doc.uploadedAt,
+      paymentStatus: doc.paymentStatus || 'not_required',
+      paymentDate: doc.paymentPaidAt
+    }));
+
+    // Available for payout (paid transactions not yet claimed)
+    const payoutResult = dbGet(
+      `SELECT COALESCE(SUM(sessionAmount), 0) as totalPayout FROM owner_documents 
+       WHERE notaryId = :notaryId AND paymentStatus = 'paid' AND sessionAmount > 0`,
+      { notaryId }
+    );
+    const availableForPayout = payoutResult?.totalPayout || 0;
+
+    res.json({
+      success: true,
+      data: {
+        totalCompletedCalls,
+        onDemandCalls,
+        scheduledCalls,
+        totalTransactionAmount,
+        availableForPayout,
+        transactions
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching notary dashboard stats:', error);
+    res.status(500).json({ error: 'Failed to fetch notary dashboard stats' });
+  }
+});
+
 // Socket.io Events
 io.on('connection', (socket) => {
   console.log(`✅ New user connected: ${socket.id}`);
 
   // User joins a notarization session
   socket.on('joinSession', (data) => {
+    const tokenPayload = verifyAccessToken(data?.token || data?.authToken || '');
+    if (!tokenPayload) {
+      socket.emit('authError', { message: 'Unauthorized socket session. Please login again.' });
+      return;
+    }
+
     const rawRoomId = data?.roomId;
     const roomId = normalizeRoomId(rawRoomId);
-    const role = normalizeRole(data?.role);
-    const userId = data?.userId || socket.id;
-    const username = data?.username || userId;
+    const role = normalizeRole(tokenPayload.role);
+    const userId = tokenPayload.userId || socket.id;
+    const username = tokenPayload.sub || data?.username || userId;
 
     if (!roomId || !role) {
       console.warn(`⚠️ Invalid joinSession payload from ${socket.id}:`, data);
+      return;
+    }
+
+    const userRow = dbGet('SELECT otpVerified, kbaStatus FROM users WHERE userId = :userId', { userId });
+    if (!userRow) {
+      socket.emit('authError', { message: 'User record not found for socket session' });
+      return;
+    }
+    if (shouldRequireKbaForRole(role) && (!Number(userRow.otpVerified) || !isKbaApprovedStatus(userRow.kbaStatus))) {
+      socket.emit('authError', {
+        message: 'KBA approval is required before joining live sessions',
+        kbaStatus: normalizeKbaStatus(userRow.kbaStatus),
+      });
       return;
     }
     
@@ -2585,6 +4131,7 @@ io.on('connection', (socket) => {
 async function startServer() {
   try {
     await initDatabase();
+    setInterval(autoStartDueScheduledMeetings, 5000);
 
     server.listen(PORT, () => {
       console.log(`

@@ -31,6 +31,7 @@ const OwnerSessionPage = () => {
       role: "owner",
       userId: authUser?.userId || socket.id,
       username: authUser?.username || "Owner",
+      token: authUser?.token,
     });
 
     const onConnect = () => setIsConnected(true);

@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchOwnerDocuments, updateOwnerDocumentReview } from '../utils/apiClient'
+import { fetchOwnerDocuments, updateOwnerDocumentReview, scheduleOwnerDocumentMeeting } from '../utils/apiClient'
 import socket from '../socket/socket'
 
 const formatDate = (iso) => {
@@ -38,6 +38,11 @@ const NotaryDocDashboardPage = () => {
   const [docs, setDocs] = useState([])
   const [loading, setLoading] = useState(true)
   const [adminTerminationByDoc, setAdminTerminationByDoc] = useState({})
+  const [actionMenuDocId, setActionMenuDocId] = useState(null)
+  const [showScheduleModal, setShowScheduleModal] = useState(false)
+  const [schedulingDocId, setSchedulingDocId] = useState(null)
+  const [selectedScheduleDate, setSelectedScheduleDate] = useState('')
+  const [selectedScheduleTime, setSelectedScheduleTime] = useState('')
 
   const authUser = (() => {
     try {
@@ -72,6 +77,45 @@ const NotaryDocDashboardPage = () => {
     // Navigate with a flag to indicate this is a fresh session start
     // The NotaryPage will emit 'notarySessionStarted' once it's loaded and connected
     navigate(`/notary?sessionId=${encodeURIComponent(doc.sessionId)}&role=notary&sessionStarted=true&documentId=${encodeURIComponent(doc.id)}`);
+  };
+
+  const handleScheduleMeeting = (doc) => {
+    console.log('📅 Schedule meeting for document:', doc)
+    setSchedulingDocId(doc.id)
+    setShowScheduleModal(true)
+    setActionMenuDocId(null)
+  };
+
+  const handleConfirmSchedule = async () => {
+    if (!selectedScheduleDate || !selectedScheduleTime) {
+      alert('Please select both date and time')
+      return
+    }
+
+    try {
+      const scheduledAt = new Date(`${selectedScheduleDate}T${selectedScheduleTime}`).toISOString()
+      console.log('📅 Confirming schedule:', schedulingDocId, scheduledAt)
+      
+      await scheduleOwnerDocumentMeeting(schedulingDocId, scheduledAt)
+      
+      // Update local state to reflect the scheduled time
+      setDocs((prevDocs) =>
+        prevDocs.map((doc) =>
+          doc.id === schedulingDocId
+            ? { ...doc, scheduledAt }
+            : doc
+        )
+      )
+      
+      setShowScheduleModal(false)
+      setSchedulingDocId(null)
+      setSelectedScheduleDate('')
+      setSelectedScheduleTime('')
+      alert('Meeting scheduled successfully!')
+    } catch (error) {
+      console.error('Failed to schedule meeting:', error)
+      alert('Failed to schedule meeting. Please try again.')
+    }
   };
 
   // Load documents from backend on component mount
@@ -121,6 +165,11 @@ const NotaryDocDashboardPage = () => {
       const documentId = updated?.documentId || updated?.id
       if (!documentId) return
 
+      // Close action menu if doc status changed away from accepted (e.g., time expired and auto-started)
+      if (actionMenuDocId === documentId && String(updated.status || '').trim().toLowerCase() !== 'accepted') {
+        setActionMenuDocId(null)
+      }
+
       setDocs((prevDocs) => {
         const exists = prevDocs.some((d) => d.id === documentId)
         if (!exists) return prevDocs
@@ -132,6 +181,7 @@ const NotaryDocDashboardPage = () => {
                 notaryReview: updated.notaryReview || d.notaryReview,
                 notaryName: updated.notaryName || d.notaryName,
                 notaryReviewedAt: updated.notaryReviewedAt || d.notaryReviewedAt,
+                scheduledAt: updated.scheduledAt || d.scheduledAt,
                 status: updated.status || d.status,
               }
             : d
@@ -280,7 +330,7 @@ const NotaryDocDashboardPage = () => {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '2fr 1.2fr 1.4fr 1fr 1.2fr 1.5fr',
+              gridTemplateColumns: '2fr 1.2fr 1.4fr 1fr 1.2fr 1.4fr 1.5fr',
               gap: '12px',
               padding: '14px 18px',
               background: '#f8fafc',
@@ -295,6 +345,7 @@ const NotaryDocDashboardPage = () => {
             <span>Uploaded</span>
             <span>Status</span>
             <span>Session</span>
+            <span>Scheduled</span>
             <span>Actions</span>
           </div>
 
@@ -313,7 +364,7 @@ const NotaryDocDashboardPage = () => {
                   key={doc.id}
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '2fr 1.2fr 1.4fr 1fr 1.2fr 1.5fr',
+                    gridTemplateColumns: '2fr 1.2fr 1.4fr 1fr 1.2fr 1.4fr 1.5fr',
                     gap: '12px',
                     padding: '14px 18px',
                     alignItems: 'center',
@@ -347,8 +398,14 @@ const NotaryDocDashboardPage = () => {
                     {doc.sessionId ? doc.sessionId.substring(0, 20) + '...' : '-'}
                   </span>
 
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    {status === 'accepted' ? (
+                  {doc.scheduledAt ? (
+                    <div style={{ color: '#059669', fontSize: '12px', fontWeight: 600 }}>
+                      📅 {new Date(doc.scheduledAt).toLocaleDateString()} {new Date(doc.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  ) : null}
+
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', position: 'relative' }}>
+                    {(status === 'accepted' || status === 'session_started') ? (
                       <button
                         onClick={() => handleStartSession(doc)}
                         style={{
@@ -400,6 +457,65 @@ const NotaryDocDashboardPage = () => {
                         Reject
                       </button>
                     ) : null}
+
+                    {status === 'accepted' ? (
+                      <>
+                        <button
+                          onClick={() => setActionMenuDocId(actionMenuDocId === doc.id ? null : doc.id)}
+                          style={{
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '8px',
+                            background: '#f8fafc',
+                            color: '#334155',
+                            fontWeight: 700,
+                            padding: '8px 10px',
+                            cursor: 'pointer',
+                            fontSize: '14px',
+                            width: '32px',
+                            height: '32px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                          title="More actions"
+                        >
+                          ⋮
+                        </button>
+
+                        {actionMenuDocId === doc.id ? (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              top: '42px',
+                              right: '0px',
+                              background: '#ffffff',
+                              border: '1px solid #cbd5e1',
+                              boxShadow: '0 4px 12px rgba(15, 23, 42, 0.12)',
+                              borderRadius: '8px',
+                              zIndex: 20,
+                              minWidth: '154px',
+                              textAlign: 'left',
+                            }}
+                          >
+                            <button
+                              onClick={() => handleScheduleMeeting(doc)}
+                              style={{
+                                width: '100%',
+                                border: 'none',
+                                background: 'transparent',
+                                padding: '10px 12px',
+                                textAlign: 'left',
+                                color: '#111827',
+                                cursor: 'pointer',
+                                fontSize: '13px',
+                              }}
+                            >
+                              Schedule Meeting
+                            </button>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : null}
                   </div>
                 </div>
               )
@@ -407,6 +523,111 @@ const NotaryDocDashboardPage = () => {
           )}
         </div>
       </div>
+
+      {/* Schedule Meeting Modal */}
+      {showScheduleModal ? (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setShowScheduleModal(false)}
+        >
+          <div
+            style={{
+              background: '#ffffff',
+              borderRadius: '12px',
+              padding: '24px',
+              maxWidth: '400px',
+              width: '90%',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ margin: '0 0 16px 0', color: '#0f172a', fontSize: '20px', fontWeight: 700 }}>
+              📅 Schedule Meeting
+            </h2>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: 600, color: '#475569' }}>
+                Date
+              </label>
+              <input
+                type="date"
+                value={selectedScheduleDate}
+                onChange={(e) => setSelectedScheduleDate(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: 600, color: '#475569' }}>
+                Time
+              </label>
+              <input
+                type="time"
+                value={selectedScheduleTime}
+                onChange={(e) => setSelectedScheduleTime(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button
+                onClick={() => setShowScheduleModal(false)}
+                style={{
+                  flex: 1,
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '8px',
+                  background: '#f8fafc',
+                  color: '#334155',
+                  padding: '10px 16px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmSchedule}
+                style={{
+                  flex: 1,
+                  border: 'none',
+                  borderRadius: '8px',
+                  background: '#3b82f6',
+                  color: '#ffffff',
+                  padding: '10px 16px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                }}
+              >
+                Schedule
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
