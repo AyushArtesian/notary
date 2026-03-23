@@ -2474,6 +2474,34 @@ io.on('connection', (socket) => {
     });
   });
 
+  socket.on('screenShareStarted', (data) => {
+    const userSession = userSessions.get(socket.id);
+    const roomId = normalizeRoomId(data?.sessionId || userSession?.roomId);
+    if (!userSession || !roomId || userSession.roomId !== roomId) {
+      return;
+    }
+
+    io.to(roomId).emit('screenShareStarted', {
+      sessionId: roomId,
+      role: data?.role || userSession.role,
+      fromSocketId: socket.id,
+    });
+  });
+
+  socket.on('screenShareStopped', (data) => {
+    const userSession = userSessions.get(socket.id);
+    const roomId = normalizeRoomId(data?.sessionId || userSession?.roomId);
+    if (!userSession || !roomId || userSession.roomId !== roomId) {
+      return;
+    }
+
+    io.to(roomId).emit('screenShareStopped', {
+      sessionId: roomId,
+      role: data?.role || userSession.role,
+      fromSocketId: socket.id,
+    });
+  });
+
   // Handle owner acknowledging session start
   socket.on('ownerAckSessionStart', (data) => {
     console.log('✅ Owner acknowledged session start:', data);
