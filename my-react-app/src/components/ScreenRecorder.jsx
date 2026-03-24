@@ -853,7 +853,7 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
           </div>
         )}
 
-        {canHostLiveMeeting && isLiveMeeting && !isScreenSharing && !remoteScreenSharing ? (
+        {canHostLiveMeeting && !isLiveMeeting && !isScreenSharing && !remoteScreenSharing ? (
           <button
             onClick={startScreenShare}
             style={{
