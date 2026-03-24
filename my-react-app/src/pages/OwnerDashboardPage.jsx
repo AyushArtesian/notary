@@ -525,6 +525,7 @@ const OwnerDashboardPage = () => {
   const currentSessionIdRef = useRef(null);
   const editorScrollRef = useRef(null);
   const pdfScrollRef = useRef(null);
+  const scrollEmitTimerRef = useRef(null);
   const fileInputRef = useRef(null);
   const extractionFileInputRef = useRef(null);
   const isApplyingScrollRef = useRef(false);
@@ -1053,22 +1054,36 @@ const OwnerDashboardPage = () => {
     };
 
     const onDocumentScrolled = (data) => {
-      console.log('📍 [OWNER] Received scroll event:', data);
-      if (data?.fromRole !== "notary") return;
-      const scrollTarget = pdfScrollRef.current || editorScrollRef.current;
-      if (scrollTarget && (data?.scrollRatio !== undefined || data?.scrollPosition !== undefined)) {
-        const maxScrollable = Math.max(scrollTarget.scrollHeight - scrollTarget.clientHeight, 0);
-        const nextScrollTop = data?.scrollRatio !== undefined
-          ? maxScrollable * Number(data.scrollRatio)
-          : Number(data.scrollPosition);
-        console.log('📍 [OWNER] Applying scroll to position:', nextScrollTop);
-        isApplyingScrollRef.current = true;
-        scrollTarget.scrollTop = Number.isFinite(nextScrollTop) ? nextScrollTop : 0;
-        // Reset the flag after applying scroll
-        setTimeout(() => {
-          isApplyingScrollRef.current = false;
-        }, 100);
-      }
+      if (data?.fromRole && data.fromRole !== "notary") return;
+      if (data?.scrollRatio === undefined && data?.scrollPosition === undefined) return;
+
+      const editorTarget = editorScrollRef.current;
+      const pdfTarget = pdfScrollRef.current;
+      const candidates = [editorTarget, pdfTarget].filter(Boolean);
+      if (!candidates.length) return;
+
+      // Pick the element with real scroll range; this avoids binding to a non-scrollable inner PDF wrapper.
+      const scrollTarget = candidates.reduce((best, current) => {
+        const bestRange = Math.max(best.scrollHeight - best.clientHeight, 0);
+        const currentRange = Math.max(current.scrollHeight - current.clientHeight, 0);
+        return currentRange > bestRange ? current : best;
+      });
+
+      const maxScrollable = Math.max(scrollTarget.scrollHeight - scrollTarget.clientHeight, 0);
+      const nextScrollTop = data?.scrollRatio !== undefined
+        ? maxScrollable * Number(data.scrollRatio)
+        : Number(data.scrollPosition);
+
+      isApplyingScrollRef.current = true;
+      const finalScrollTop = Number.isFinite(nextScrollTop) ? nextScrollTop : 0;
+
+      // Keep both refs aligned when both exist.
+      if (editorTarget) editorTarget.scrollTop = finalScrollTop;
+      if (pdfTarget) pdfTarget.scrollTop = finalScrollTop;
+
+      setTimeout(() => {
+        isApplyingScrollRef.current = false;
+      }, 100);
     };
 
     socket.on("usersConnected", onUsersConnected);
@@ -1095,6 +1110,61 @@ const OwnerDashboardPage = () => {
       socket.off("documentScrolled", onDocumentScrolled);
     };
   }, [activeSessionDocId, activeSessions, previousSessions]);
+
+  // Emit owner scroll updates so notary view stays synchronized bidirectionally.
+  useEffect(() => {
+    if (!activeSessionDocId || !sessionJoined) return;
+
+    const activeSessionId =
+      activeSessions[activeSessionDocId] ||
+      previousSessions[activeSessionDocId] ||
+      currentSessionIdRef.current;
+    if (!activeSessionId) return;
+
+    const getScrollMetrics = () => {
+      const candidates = [editorScrollRef.current, pdfScrollRef.current].filter(Boolean);
+      if (!candidates.length) return { scrollPosition: 0, scrollRatio: 0 };
+
+      const target = candidates.reduce((best, current) => {
+        const bestRange = Math.max(best.scrollHeight - best.clientHeight, 0);
+        const currentRange = Math.max(current.scrollHeight - current.clientHeight, 0);
+        return currentRange > bestRange ? current : best;
+      });
+
+      const maxScrollable = Math.max(target.scrollHeight - target.clientHeight, 0);
+      const scrollPosition = target.scrollTop;
+      const scrollRatio = maxScrollable > 0 ? scrollPosition / maxScrollable : 0;
+      return { scrollPosition, scrollRatio };
+    };
+
+    const handleScroll = () => {
+      if (isApplyingScrollRef.current) return;
+      if (scrollEmitTimerRef.current) {
+        window.clearTimeout(scrollEmitTimerRef.current);
+      }
+
+      scrollEmitTimerRef.current = window.setTimeout(() => {
+        const { scrollPosition, scrollRatio } = getScrollMetrics();
+        socket.emit("documentScrolled", {
+          sessionId: activeSessionId,
+          scrollPosition,
+          scrollRatio,
+          timestamp: Date.now(),
+        });
+      }, 50);
+    };
+
+    const targets = [editorScrollRef.current, pdfScrollRef.current].filter(Boolean);
+    if (!targets.length) return;
+
+    targets.forEach((target) => target.addEventListener("scroll", handleScroll));
+    return () => {
+      if (scrollEmitTimerRef.current) {
+        window.clearTimeout(scrollEmitTimerRef.current);
+      }
+      targets.forEach((target) => target.removeEventListener("scroll", handleScroll));
+    };
+  }, [activeSessionDocId, activeSessions, previousSessions, sessionJoined, uploadedFile]);
 
   // Cleanup effect: Emit ownerLeftSession when exiting a session
   useEffect(() => {

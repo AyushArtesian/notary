@@ -70,6 +70,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
   const editorScrollRef = useRef(null);
   const pdfScrollRef = useRef(null);
   const scrollEmitTimerRef = useRef(null);
+  const isApplyingScrollRef = useRef(false);
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
 
@@ -186,6 +187,35 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         setDocumentInfo({ fileName: data.fileName });
       };
 
+      const onDocumentScrolled = (data) => {
+        if (data?.fromRole && data.fromRole !== "owner") return;
+        if (data?.scrollRatio === undefined && data?.scrollPosition === undefined) return;
+
+        const editorTarget = editorScrollRef.current;
+        const pdfTarget = pdfScrollRef.current;
+        const candidates = [editorTarget, pdfTarget].filter(Boolean);
+        if (!candidates.length) return;
+
+        const scrollTarget = candidates.reduce((best, current) => {
+          const bestRange = Math.max(best.scrollHeight - best.clientHeight, 0);
+          const currentRange = Math.max(current.scrollHeight - current.clientHeight, 0);
+          return currentRange > bestRange ? current : best;
+        });
+
+        const maxScrollable = Math.max(scrollTarget.scrollHeight - scrollTarget.clientHeight, 0);
+        const nextScrollTop = data?.scrollRatio !== undefined
+          ? maxScrollable * Number(data.scrollRatio)
+          : Number(data.scrollPosition);
+        const finalScrollTop = Number.isFinite(nextScrollTop) ? nextScrollTop : 0;
+
+        isApplyingScrollRef.current = true;
+        if (editorTarget) editorTarget.scrollTop = finalScrollTop;
+        if (pdfTarget) pdfTarget.scrollTop = finalScrollTop;
+        setTimeout(() => {
+          isApplyingScrollRef.current = false;
+        }, 100);
+      };
+
       const onOwnerLeftSession = (data) => {
         console.log("👤 [NOTARY] Owner left session:", data.sessionId);
         if (data.sessionId === sessionId) {
@@ -280,6 +310,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       socket.on("sessionStatus", onSessionStatus);
       socket.on("documentUploaded", onDocumentUploaded);
       socket.on("documentShared", onDocumentShared);
+      socket.on("documentScrolled", onDocumentScrolled);
       socket.on("ownerLeftSession", onOwnerLeftSession);
       socket.on("adminSessionTerminated", onAdminSessionTerminated);
       socket.on("notarySessionStartRejected", onNotarySessionStartRejected);
@@ -367,7 +398,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         socket.off("ownerLeftSession", onOwnerLeftSession);
         socket.off("adminSessionTerminated", onAdminSessionTerminated);
         socket.off("notarySessionStartRejected", onNotarySessionStartRejected);
-        socket.off('documentPaymentRequested', onDocumentPaymentRequested);
+        socket.off("documentScrolled", onDocumentScrolled);
         socket.off('ownerPaymentCompleted', onOwnerPaymentCompleted);
       };
     }
@@ -426,13 +457,18 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     };
   }, [sessionJoined, sessionId, documentId, documentInfo?.fileName]);
 
-  // Scroll synchronization: emit notary's scroll position to owner
+  // Scroll synchronization: emit notary's scroll position to owner.
+  // Listen to outer editor container which receives all scroll events.
   useEffect(() => {
     if (!sessionJoined || !sessionId) return;
 
     const getScrollMetrics = () => {
-      const el = pdfScrollRef.current || editorScrollRef.current;
-      if (!el) return { scrollPosition: 0, scrollRatio: 0 };
+      // Prioritize editor scroll ref (outer scrollable container)
+      const el = editorScrollRef.current;
+      if (!el) {
+        console.warn('[NOTARY SCROLL] editorScrollRef not set');
+        return { scrollPosition: 0, scrollRatio: 0 };
+      }
       const maxScrollable = Math.max(el.scrollHeight - el.clientHeight, 0);
       const scrollPosition = el.scrollTop;
       const scrollRatio = maxScrollable > 0 ? scrollPosition / maxScrollable : 0;
@@ -440,11 +476,13 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     };
 
     const handleScroll = () => {
+      if (isApplyingScrollRef.current) return;
       if (scrollEmitTimerRef.current) {
         window.clearTimeout(scrollEmitTimerRef.current);
       }
       scrollEmitTimerRef.current = window.setTimeout(() => {
         const { scrollPosition, scrollRatio } = getScrollMetrics();
+        console.log('[NOTARY SCROLL] Emitting scroll:', { scrollPosition, scrollRatio, sessionId });
         socket.emit("documentScrolled", {
           sessionId,
           scrollPosition,
@@ -454,17 +492,20 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       }, 50); // Throttle scroll events
     };
 
-    const target = pdfScrollRef.current || editorScrollRef.current;
-    if (!target) return;
+    const target = editorScrollRef.current;
+    if (!target) {
+      console.warn('[NOTARY SCROLL] Cannot attach listener - editorScrollRef not set');
+      return;
+    }
 
+    console.log('[NOTARY SCROLL] Attaching scroll listener to editorScrollRef');
     target.addEventListener("scroll", handleScroll);
     return () => {
+      console.log('[NOTARY SCROLL] Removing scroll listener from editorScrollRef');
       if (scrollEmitTimerRef.current) {
         window.clearTimeout(scrollEmitTimerRef.current);
       }
-      if (target) {
-        target.removeEventListener("scroll", handleScroll);
-      }
+      target.removeEventListener("scroll", handleScroll);
     };
   }, [sessionJoined, sessionId, pdfDataUrl]);
 
