@@ -519,6 +519,8 @@ const OwnerPage = () => {
         userId={authUser.userId}
         showAssets={true}
         uploadedAsset={uploadedAsset}
+        sourcePdfDataUrl={typeof uploadedFile === "string" ? uploadedFile : ""}
+        allowSignatureExtraction
       />
 
       {/* Main Content */}

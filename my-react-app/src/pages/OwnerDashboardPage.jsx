@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { saveOwnerDocument, fetchOwnerDocuments, deleteOwnerDocument, payOwnerDocumentSession } from "../utils/apiClient";
+import { saveOwnerDocument, fetchOwnerDocuments, deleteOwnerDocument, payOwnerDocumentSession, saveSignature } from "../utils/apiClient";
 import { base64ToUint8Array } from "../utils/pdfUtils";
 import socket from "../socket/socket";
 import PdfViewer from "../components/PdfViewer";
 import SidebarAssets from "../components/SidebarAssets";
 import CanvasBoard from "../components/CanvasBoard";
 import ScreenRecorder from "../components/ScreenRecorder";
+import SignatureExtractionModal from "../components/SignatureExtractionModal";
 import { createDocumentDragAsset } from "../utils/documentAsset";
 
 const ACTIVE_SESSIONS_KEY = "notary.ownerActiveSessions";
@@ -517,12 +518,15 @@ const OwnerDashboardPage = () => {
   const [paymentError, setPaymentError] = useState("");
   const [isPaying, setIsPaying] = useState(false);
   const [paymentSuccessMessage, setPaymentSuccessMessage] = useState("");
+  const [signatureExtractionPdfDataUrl, setSignatureExtractionPdfDataUrl] = useState("");
+  const [signatureExtractionMessage, setSignatureExtractionMessage] = useState("");
 
   const lastAutoSharedDocKeyRef = useRef("");
   const currentSessionIdRef = useRef(null);
   const editorScrollRef = useRef(null);
   const pdfScrollRef = useRef(null);
   const fileInputRef = useRef(null);
+  const extractionFileInputRef = useRef(null);
   const isApplyingScrollRef = useRef(false);
   const navigate = useNavigate();
 
@@ -1386,6 +1390,69 @@ const OwnerDashboardPage = () => {
     setNotarizingDoc(doc);
   };
 
+  const handleOpenSignatureExtractionUpload = () => {
+    extractionFileInputRef.current?.click();
+  };
+
+  const handleSignatureExtractionFileChange = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    const isImage = /\.(jpe?g|png)$/i.test(file.name) || /^(image\/png|image\/jpe?g)$/i.test(file.type);
+
+    if (!isPdf && !isImage) {
+      setSignatureExtractionMessage("Please upload PDF, PNG, JPG, or JPEG for signature extraction.");
+      setTimeout(() => setSignatureExtractionMessage(""), 3600);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!dataUrl) {
+        setSignatureExtractionMessage("Failed to read uploaded PDF. Please try again.");
+        setTimeout(() => setSignatureExtractionMessage(""), 3600);
+        return;
+      }
+      setSignatureExtractionPdfDataUrl(dataUrl);
+    };
+    reader.onerror = () => {
+      setSignatureExtractionMessage("Failed to read uploaded PDF. Please try again.");
+      setTimeout(() => setSignatureExtractionMessage(""), 3600);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveExtractedSignature = async ({ imageDataUrl }) => {
+    if (!imageDataUrl) {
+      throw new Error("Unable to save extracted signature.");
+    }
+
+    const signatureId = typeof window !== "undefined" && window.crypto?.randomUUID
+      ? window.crypto.randomUUID()
+      : `signature-owner-${Date.now()}`;
+
+    const effectiveSessionId =
+      sessionId ||
+      `notary-session-${Date.now()}`;
+
+    await saveSignature({
+      id: signatureId,
+      sessionId: effectiveSessionId,
+      userId: authUser?.userId || null,
+      username: authUser?.username || null,
+      name: `Extracted Signature (${new Date().toLocaleDateString()})`,
+      image: imageDataUrl,
+      userRole: "owner",
+    });
+
+    setSignatureExtractionPdfDataUrl("");
+    setSignatureExtractionMessage("Signature extracted and saved to your library.");
+    setTimeout(() => setSignatureExtractionMessage(""), 3600);
+  };
+
   const handlePaySessionAmount = async (doc) => {
     setPaymentModalDoc(doc);
     setPaymentError("");
@@ -1532,6 +1599,8 @@ const OwnerDashboardPage = () => {
             uploadedAsset={uploadedAsset}
             uploadedAssets={uploadedAssets}
             assetScopeKey={activeSessionDocId || "owner-no-doc"}
+            sourcePdfDataUrl={typeof uploadedFile === "string" ? uploadedFile : ""}
+            allowSignatureExtraction
           />
 
           {/* Main Content */}
@@ -1997,6 +2066,29 @@ const OwnerDashboardPage = () => {
               </button>
 
               <button
+                onClick={handleOpenSignatureExtractionUpload}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  padding: "10px 22px",
+                  background: "#0f766e",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "10px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  boxShadow: "0 2px 8px rgba(15,118,110,0.28)",
+                  transition: "background 0.15s, transform 0.1s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#0d5f59")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "#0f766e")}
+              >
+                ✂️ Extract Signature
+              </button>
+
+              <button
                 onClick={() => navigate("/owner/session")}
                 style={{
                   display: "flex",
@@ -2025,6 +2117,13 @@ const OwnerDashboardPage = () => {
               accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
               style={{ display: "none" }}
               onChange={handleFileChange}
+            />
+            <input
+              ref={extractionFileInputRef}
+              type="file"
+              accept=".pdf,application/pdf,.png,image/png,.jpg,.jpeg,image/jpeg"
+              style={{ display: "none" }}
+              onChange={handleSignatureExtractionFileChange}
             />
           </div>
 
@@ -2075,6 +2174,34 @@ const OwnerDashboardPage = () => {
                 <button
                   onClick={() => setPaymentSuccessMessage("")}
                   style={{ border: "none", background: "transparent", color: "#166534", cursor: "pointer", fontWeight: 700 }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {signatureExtractionMessage ? (
+            <div style={{ maxWidth: "900px", margin: "12px auto 0", padding: "0 24px" }}>
+              <div
+                style={{
+                  background: "#ecfeff",
+                  border: "1px solid #67e8f9",
+                  color: "#155e75",
+                  borderRadius: "10px",
+                  padding: "10px 12px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "10px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                }}
+              >
+                <span>{signatureExtractionMessage}</span>
+                <button
+                  onClick={() => setSignatureExtractionMessage("")}
+                  style={{ border: "none", background: "transparent", color: "#155e75", cursor: "pointer", fontWeight: 700 }}
                 >
                   Dismiss
                 </button>
@@ -2376,6 +2503,14 @@ const OwnerDashboardPage = () => {
           setPaymentError("");
         }}
         onConfirm={handleConfirmSessionPayment}
+      />
+
+      <SignatureExtractionModal
+        open={Boolean(signatureExtractionPdfDataUrl)}
+        pdfDataUrl={signatureExtractionPdfDataUrl}
+        title="Extract Signature • Uploaded Source Document"
+        onClose={() => setSignatureExtractionPdfDataUrl("")}
+        onSave={handleSaveExtractedSignature}
       />
     </div>
   );
