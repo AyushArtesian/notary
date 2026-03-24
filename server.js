@@ -67,8 +67,8 @@ const io = socketIO(server, {
 });
 
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json({ limit: '200mb' }));
+app.use(express.urlencoded({ limit: '200mb', extended: true }));
 
 // Setup SQLite database (using sql.js in Node to avoid native build tool requirements)
 const dbPath = path.resolve(__dirname, 'data', 'notary.db');
@@ -292,6 +292,28 @@ CREATE TABLE IF NOT EXISTS notary_calls (
   updatedAt INTEGER NOT NULL,
   FOREIGN KEY (documentId) REFERENCES owner_documents(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS recordings (
+  id TEXT PRIMARY KEY,
+  sessionId TEXT NOT NULL,
+  userId TEXT,
+  username TEXT,
+  userRole TEXT,
+  fileName TEXT NOT NULL,
+  mimeType TEXT,
+  sizeBytes INTEGER,
+  provider TEXT NOT NULL DEFAULT 'onedrive',
+  providerFileId TEXT,
+  providerUrl TEXT,
+  shareUrl TEXT,
+  status TEXT NOT NULL DEFAULT 'uploaded',
+  errorMessage TEXT,
+  startedAt INTEGER,
+  endedAt INTEGER,
+  durationMs INTEGER,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+);
 `;
 
 const now = () => Math.floor(Date.now());
@@ -373,6 +395,7 @@ function recoverDatabase(reason) {
   ensureAssetsSchema();
   ensureKbaSchema();
   ensureNotaryCallsSchema();
+  ensureRecordingsSchema();
   dropLegacyDocumentsTable();
   setupPreparedStatements();
   loadUsersFromJson();
@@ -451,6 +474,7 @@ async function initDatabase() {
   ensureAssetsSchema();
   ensureKbaSchema();
   ensureNotaryCallsSchema();
+  ensureRecordingsSchema();
   dropLegacyDocumentsTable();
   setupPreparedStatements();
   loadUsersFromJson();
@@ -848,6 +872,36 @@ function ensureNotaryCallsSchema() {
   }
 }
 
+function ensureRecordingsSchema() {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS recordings (
+        id TEXT PRIMARY KEY,
+        sessionId TEXT NOT NULL,
+        userId TEXT,
+        username TEXT,
+        userRole TEXT,
+        fileName TEXT NOT NULL,
+        mimeType TEXT,
+        sizeBytes INTEGER,
+        provider TEXT NOT NULL DEFAULT 'onedrive',
+        providerFileId TEXT,
+        providerUrl TEXT,
+        shareUrl TEXT,
+        status TEXT NOT NULL DEFAULT 'uploaded',
+        errorMessage TEXT,
+        startedAt INTEGER,
+        endedAt INTEGER,
+        durationMs INTEGER,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL
+      );
+    `);
+  } catch (err) {
+    console.warn('⚠️ Failed to ensure recordings schema:', err.message || err);
+  }
+}
+
 function dropLegacyDocumentsTable() {
   try {
     const hasDocumentsTable = dbAll(
@@ -1036,6 +1090,14 @@ const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || '';
 const OTP_CHANNEL_DEFAULT = process.env.OTP_CHANNEL_DEFAULT || 'email';
 const OTP_TTL_MS = Number(process.env.OTP_TTL_MS || 10 * 60 * 1000);
 const KBA_STORAGE_DIR = path.resolve(__dirname, 'data', 'kba');
+const RECORDING_UPLOAD_MAX_BYTES = Number(process.env.RECORDING_UPLOAD_MAX_BYTES || 120 * 1024 * 1024);
+const ONEDRIVE_TENANT_ID = String(process.env.ONEDRIVE_TENANT_ID || '').trim();
+const ONEDRIVE_CLIENT_ID = String(process.env.ONEDRIVE_CLIENT_ID || '').trim();
+const ONEDRIVE_CLIENT_SECRET = String(process.env.ONEDRIVE_CLIENT_SECRET || '').trim();
+const ONEDRIVE_DRIVE_ID = String(process.env.ONEDRIVE_DRIVE_ID || '').trim();
+const ONEDRIVE_USER_ID = String(process.env.ONEDRIVE_USER_ID || '').trim();
+const ONEDRIVE_FOLDER_PATH = String(process.env.ONEDRIVE_FOLDER_PATH || '/NotaryRecordings').trim() || '/NotaryRecordings';
+const ONEDRIVE_SHARE_SCOPE = String(process.env.ONEDRIVE_SHARE_SCOPE || 'organization').trim().toLowerCase();
 
 const KBA_STATUS = {
   DRAFT: 'draft',
@@ -1081,6 +1143,134 @@ function getSmtpTransporter() {
       pass: SMTP_PASS,
     },
   });
+}
+
+function isOneDriveConfigured() {
+  return Boolean(ONEDRIVE_TENANT_ID && ONEDRIVE_CLIENT_ID && ONEDRIVE_CLIENT_SECRET && (ONEDRIVE_DRIVE_ID || ONEDRIVE_USER_ID));
+}
+
+function sanitizeFileName(fileName) {
+  const base = String(fileName || 'recording.webm').trim() || 'recording.webm';
+  const safe = base.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return safe.length > 180 ? safe.slice(0, 180) : safe;
+}
+
+function parseDataUrlPayload(dataUrl) {
+  const raw = String(dataUrl || '').trim();
+  if (!raw) {
+    throw new Error('Recording payload is empty');
+  }
+
+  const match = raw.match(/^data:([^;]+);base64,(.+)$/);
+  if (match) {
+    return { mimeType: match[1], base64Payload: match[2] };
+  }
+
+  return { mimeType: 'application/octet-stream', base64Payload: raw };
+}
+
+async function getOneDriveAccessToken() {
+  if (!isOneDriveConfigured()) {
+    throw new Error('OneDrive is not configured on this server');
+  }
+
+  const tokenEndpoint = `https://login.microsoftonline.com/${encodeURIComponent(ONEDRIVE_TENANT_ID)}/oauth2/v2.0/token`;
+  const body = new URLSearchParams({
+    client_id: ONEDRIVE_CLIENT_ID,
+    client_secret: ONEDRIVE_CLIENT_SECRET,
+    grant_type: 'client_credentials',
+    scope: 'https://graph.microsoft.com/.default',
+  });
+
+  const response = await fetch(tokenEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.access_token) {
+    throw new Error(payload?.error_description || payload?.error || `Failed to fetch OneDrive access token (HTTP ${response.status})`);
+  }
+
+  return payload.access_token;
+}
+
+function buildOneDriveUploadUrl(encodedPath) {
+  if (ONEDRIVE_DRIVE_ID) {
+    return `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(ONEDRIVE_DRIVE_ID)}/root:/${encodedPath}:/content`;
+  }
+  return `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(ONEDRIVE_USER_ID)}/drive/root:/${encodedPath}:/content`;
+}
+
+async function createOneDriveShareLink(itemId, accessToken) {
+  const scope = ONEDRIVE_SHARE_SCOPE === 'anonymous' ? 'anonymous' : 'organization';
+  const endpoint = ONEDRIVE_DRIVE_ID
+    ? `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(ONEDRIVE_DRIVE_ID)}/items/${encodeURIComponent(itemId)}/createLink`
+    : `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(ONEDRIVE_USER_ID)}/drive/items/${encodeURIComponent(itemId)}/createLink`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ type: 'view', scope }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `Failed to create OneDrive share link (HTTP ${response.status})`);
+  }
+
+  return payload?.link?.webUrl || '';
+}
+
+async function uploadRecordingToOneDrive({ fileBuffer, fileName, mimeType, sessionId }) {
+  const accessToken = await getOneDriveAccessToken();
+
+  const safeSession = sanitizeFileName(sessionId || 'session-unknown');
+  const safeFileName = sanitizeFileName(fileName || `recording-${Date.now()}.webm`);
+  const folderPath = ONEDRIVE_FOLDER_PATH.replace(/^\/+|\/+$/g, '');
+  const fullPath = `${folderPath}/${safeSession}/${Date.now()}-${safeFileName}`;
+  const encodedPath = fullPath
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+
+  const uploadUrl = buildOneDriveUploadUrl(encodedPath);
+
+  const uploadResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': mimeType || 'video/webm',
+    },
+    body: fileBuffer,
+  });
+
+  const uploadPayload = await uploadResponse.json().catch(() => ({}));
+  if (!uploadResponse.ok) {
+    const message = uploadPayload?.error?.message || `Failed to upload recording to OneDrive (HTTP ${uploadResponse.status})`;
+    throw new Error(message);
+  }
+
+  let shareUrl = '';
+  if (uploadPayload?.id) {
+    try {
+      shareUrl = await createOneDriveShareLink(uploadPayload.id, accessToken);
+    } catch (linkError) {
+      console.warn('⚠️ OneDrive upload succeeded, but createLink failed:', linkError?.message || linkError);
+    }
+  }
+
+  return {
+    provider: 'onedrive',
+    providerFileId: uploadPayload?.id || null,
+    providerUrl: uploadPayload?.webUrl || null,
+    shareUrl: shareUrl || null,
+    sizeBytes: Number(uploadPayload?.size || fileBuffer.length || 0),
+  };
 }
 
 // User-related queries are executed via helper functions (dbGet/dbAll) to keep sql.js usage consistent.
@@ -2634,6 +2824,177 @@ app.delete('/api/assets/:id', (req, res) => {
   } catch (error) {
     console.error('Error deleting asset:', error);
     res.status(500).json({ error: 'Failed to delete asset' });
+  }
+});
+
+// Recording API Endpoints
+app.get('/api/recordings', requireAuth, (req, res) => {
+  try {
+    const { sessionId, status, provider } = req.query;
+
+    const recordings = dbAll(
+      `SELECT * FROM recordings
+       WHERE (:sessionId IS NULL OR sessionId = :sessionId)
+         AND (:status IS NULL OR status = :status)
+         AND (:provider IS NULL OR provider = :provider)
+       ORDER BY createdAt DESC`,
+      {
+        sessionId: sessionId ? String(sessionId) : null,
+        status: status ? String(status) : null,
+        provider: provider ? String(provider) : null,
+      }
+    );
+
+    res.json(recordings);
+  } catch (error) {
+    console.error('Error fetching recordings:', error);
+    res.status(500).json({ error: 'Failed to fetch recordings' });
+  }
+});
+
+app.post('/api/recordings/upload', requireAuth, requireRole(['notary', 'owner']), async (req, res) => {
+  const nowMs = now();
+  const recordingId = crypto.randomUUID();
+
+  try {
+    const {
+      sessionId,
+      fileName,
+      mimeType,
+      dataUrl,
+      startedAt,
+      endedAt,
+      durationMs,
+      role,
+    } = req.body || {};
+
+    const normalizedSessionId = normalizeRoomId(sessionId);
+    if (!normalizedSessionId) {
+      return res.status(400).json({ error: 'sessionId is required' });
+    }
+
+    if (!dataUrl) {
+      return res.status(400).json({ error: 'dataUrl is required' });
+    }
+
+    if (!isOneDriveConfigured()) {
+      return res.status(500).json({ error: 'OneDrive integration is not configured on the server' });
+    }
+
+    const parsed = parseDataUrlPayload(dataUrl);
+    const buffer = Buffer.from(parsed.base64Payload, 'base64');
+    if (!buffer || buffer.length === 0) {
+      return res.status(400).json({ error: 'Recording payload is empty or invalid' });
+    }
+
+    if (buffer.length > RECORDING_UPLOAD_MAX_BYTES) {
+      return res.status(413).json({ error: `Recording exceeds max upload size (${RECORDING_UPLOAD_MAX_BYTES} bytes)` });
+    }
+
+    const resolvedMimeType = String(mimeType || parsed.mimeType || 'video/webm').trim() || 'video/webm';
+    const resolvedFileName = sanitizeFileName(fileName || `recording-${Date.now()}.webm`);
+    const startedAtMs = startedAt ? Number(new Date(startedAt).getTime()) : null;
+    const endedAtMs = endedAt ? Number(new Date(endedAt).getTime()) : null;
+    const duration = Number.isFinite(Number(durationMs)) ? Math.max(0, Number(durationMs)) : null;
+
+    const uploadResult = await uploadRecordingToOneDrive({
+      fileBuffer: buffer,
+      fileName: resolvedFileName,
+      mimeType: resolvedMimeType,
+      sessionId: normalizedSessionId,
+    });
+
+    dbRun(
+      `INSERT INTO recordings (
+        id, sessionId, userId, username, userRole,
+        fileName, mimeType, sizeBytes,
+        provider, providerFileId, providerUrl, shareUrl,
+        status, errorMessage,
+        startedAt, endedAt, durationMs,
+        createdAt, updatedAt
+      ) VALUES (
+        :id, :sessionId, :userId, :username, :userRole,
+        :fileName, :mimeType, :sizeBytes,
+        :provider, :providerFileId, :providerUrl, :shareUrl,
+        :status, :errorMessage,
+        :startedAt, :endedAt, :durationMs,
+        :createdAt, :updatedAt
+      )`,
+      {
+        id: recordingId,
+        sessionId: normalizedSessionId,
+        userId: req.auth?.userId || null,
+        username: req.auth?.username || null,
+        userRole: normalizeRole(role || req.auth?.role || ''),
+        fileName: resolvedFileName,
+        mimeType: resolvedMimeType,
+        sizeBytes: Number(uploadResult.sizeBytes || buffer.length || 0),
+        provider: uploadResult.provider || 'onedrive',
+        providerFileId: uploadResult.providerFileId || null,
+        providerUrl: uploadResult.providerUrl || null,
+        shareUrl: uploadResult.shareUrl || null,
+        status: 'uploaded',
+        errorMessage: null,
+        startedAt: Number.isFinite(startedAtMs) ? startedAtMs : null,
+        endedAt: Number.isFinite(endedAtMs) ? endedAtMs : null,
+        durationMs: duration,
+        createdAt: nowMs,
+        updatedAt: nowMs,
+      }
+    );
+
+    persistDatabase();
+
+    const saved = dbGet('SELECT * FROM recordings WHERE id = :id', { id: recordingId });
+    res.json({ recording: saved });
+  } catch (error) {
+    console.error('Error uploading recording:', error);
+
+    try {
+      dbRun(
+        `INSERT INTO recordings (
+          id, sessionId, userId, username, userRole,
+          fileName, mimeType, sizeBytes,
+          provider, providerFileId, providerUrl, shareUrl,
+          status, errorMessage,
+          startedAt, endedAt, durationMs,
+          createdAt, updatedAt
+        ) VALUES (
+          :id, :sessionId, :userId, :username, :userRole,
+          :fileName, :mimeType, :sizeBytes,
+          :provider, :providerFileId, :providerUrl, :shareUrl,
+          :status, :errorMessage,
+          :startedAt, :endedAt, :durationMs,
+          :createdAt, :updatedAt
+        )`,
+        {
+          id: recordingId,
+          sessionId: normalizeRoomId(req.body?.sessionId) || 'unknown-session',
+          userId: req.auth?.userId || null,
+          username: req.auth?.username || null,
+          userRole: normalizeRole(req.body?.role || req.auth?.role || ''),
+          fileName: sanitizeFileName(req.body?.fileName || `recording-${Date.now()}.webm`),
+          mimeType: String(req.body?.mimeType || 'video/webm'),
+          sizeBytes: null,
+          provider: 'onedrive',
+          providerFileId: null,
+          providerUrl: null,
+          shareUrl: null,
+          status: 'failed',
+          errorMessage: String(error?.message || 'Failed to upload recording to OneDrive').slice(0, 1000),
+          startedAt: null,
+          endedAt: null,
+          durationMs: null,
+          createdAt: nowMs,
+          updatedAt: nowMs,
+        }
+      );
+      persistDatabase();
+    } catch (dbErr) {
+      console.warn('⚠️ Failed to persist failed recording row:', dbErr?.message || dbErr);
+    }
+
+    res.status(500).json({ error: error?.message || 'Failed to upload recording' });
   }
 });
 
