@@ -4,7 +4,6 @@ import { uploadSessionRecording } from "../utils/apiClient";
 const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
   const isNotaryRole = role === "notary";
   const isOwnerRole = role === "owner";
-  const canRecord = isNotaryRole;
   const canHostLiveMeeting = isNotaryRole || isOwnerRole;
 
   const [isRecording, setIsRecording] = useState(false);
@@ -325,6 +324,10 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
     }
   };
   const stopLiveMeeting = ({ clearError = true } = {}) => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      stopRecording();
+    }
+
     closeAllNotaryViewerPeers();
 
     if (liveCameraStreamRef.current) {
@@ -373,6 +376,15 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
       setCameraBoxPosition({ x: 24, y: 120 });
       setLiveMeetingError("");
       setIsLiveMeeting(true);
+
+      if (isNotaryRole) {
+        const recordingStarted = await startRecording();
+        if (!recordingStarted) {
+          stopLiveMeeting({ clearError: false });
+          setLiveMeetingError("Live meeting requires recording permission. Please allow screen capture and try again.");
+          return;
+        }
+      }
 
       if (socket && sessionId) {
         socket.emit("liveMeetingStarted", {
@@ -797,15 +809,17 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
       mediaRecorder.start();
       recordingStartedAtRef.current = Date.now();
       setIsRecording(true);
+      return true;
     } catch (error) {
       console.error("Error starting screen recording:", error);
-      alert("Failed to start screen recording. Make sure you granted permissions.");
+      return false;
     }
   };
 
   const stopRecording = () => {
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
       setIsRecording(false);
     }
   };
@@ -824,45 +838,13 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
       <h4 style={{ margin: "0 0 10px 0" }}>🎥 Screen Recording</h4>
 
       <div style={{ display: "flex", gap: "10px", marginBottom: "10px" }}>
-        {canRecord ? (
-          !isRecording ? (
-            <button
-              onClick={startRecording}
-              style={{
-                padding: "8px 16px",
-                backgroundColor: "#f44336",
-                color: "white",
-                border: "none",
-                borderRadius: "4px",
-                cursor: "pointer",
-                fontWeight: "bold",
-              }}
-            >
-              🔴 Start Recording
-            </button>
-          ) : (
-            <button
-              onClick={stopRecording}
-              style={{
-                padding: "8px 16px",
-                backgroundColor: "#ff9800",
-                color: "white",
-                border: "none",
-                borderRadius: "4px",
-                cursor: "pointer",
-                fontWeight: "bold",
-              }}
-            >
-              ⏹️ Stop Recording
-            </button>
-          )
-        ) : isOwnerRole ? (
+        {isOwnerRole ? (
           <div style={{ color: "#555", alignSelf: "center" }}>
             {/* Owner only sees screen share controls; no waiting text */}
           </div>
         ) : (
           <div style={{ color: "#555", fontStyle: "italic", alignSelf: "center" }}>
-            Screen recorder is disabled for this role.
+            Recording starts automatically with live meeting and stops when the meeting ends.
           </div>
         )}
 
