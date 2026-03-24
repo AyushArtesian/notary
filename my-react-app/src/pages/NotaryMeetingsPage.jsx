@@ -223,6 +223,17 @@ const SessionDetailsModal = ({
 }) => {
   if (!session) return null;
 
+  React.useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [session, onClose]);
+
   const latestRecording = Array.isArray(recordings) && recordings.length > 0 ? recordings[0] : null;
   const recordingUrl = latestRecording?.shareUrl || latestRecording?.providerUrl || '';
   const meetingTitle = session?.sessionId || 'Unknown meeting';
@@ -238,8 +249,14 @@ const SessionDetailsModal = ({
   };
 
   return (
-    <div className="session-details-overlay" role="dialog" aria-modal="true" aria-label="Session details">
-      <div className="session-details-panel">
+    <div
+      className="session-details-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Session details"
+      onClick={onClose}
+    >
+      <div className="session-details-panel" onClick={(e) => e.stopPropagation()}>
         <div className="session-details-header">
           <button type="button" className="session-details-close" onClick={onClose} aria-label="Close details">
             Close
