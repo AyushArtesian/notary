@@ -66,6 +66,8 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
   const [toastType, setToastType] = useState("info");
   const toastTimerRef = useRef(null);
   const editorScrollRef = useRef(null);
+  const pdfScrollRef = useRef(null);
+  const scrollEmitTimerRef = useRef(null);
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
 
@@ -342,6 +344,48 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       };
     }
   }, [sessionJoined, sessionId]);
+
+  // Scroll synchronization: emit notary's scroll position to owner
+  useEffect(() => {
+    if (!sessionJoined || !sessionId) return;
+
+    const getScrollMetrics = () => {
+      const el = pdfScrollRef.current || editorScrollRef.current;
+      if (!el) return { scrollPosition: 0, scrollRatio: 0 };
+      const maxScrollable = Math.max(el.scrollHeight - el.clientHeight, 0);
+      const scrollPosition = el.scrollTop;
+      const scrollRatio = maxScrollable > 0 ? scrollPosition / maxScrollable : 0;
+      return { scrollPosition, scrollRatio };
+    };
+
+    const handleScroll = () => {
+      if (scrollEmitTimerRef.current) {
+        window.clearTimeout(scrollEmitTimerRef.current);
+      }
+      scrollEmitTimerRef.current = window.setTimeout(() => {
+        const { scrollPosition, scrollRatio } = getScrollMetrics();
+        socket.emit("documentScrolled", {
+          sessionId,
+          scrollPosition,
+          scrollRatio,
+          timestamp: Date.now(),
+        });
+      }, 50); // Throttle scroll events
+    };
+
+    const target = pdfScrollRef.current || editorScrollRef.current;
+    if (!target) return;
+
+    target.addEventListener("scroll", handleScroll);
+    return () => {
+      if (scrollEmitTimerRef.current) {
+        window.clearTimeout(scrollEmitTimerRef.current);
+      }
+      if (target) {
+        target.removeEventListener("scroll", handleScroll);
+      }
+    };
+  }, [sessionJoined, sessionId, pdfDataUrl]);
 
   const resolveSessionDocumentId = async () => {
     if (documentId) return documentId;
@@ -825,13 +869,26 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
           {pdfDataUrl ? (
             <div
               ref={editorScrollRef}
-              style={{ maxHeight: "70vh", border: "1px solid #ddd", borderRadius: "5px" }}
+              style={{
+                height: "calc(100vh - 260px)",
+                minHeight: "520px",
+                overflowY: "auto",
+                border: "1px solid #ddd",
+                borderRadius: "5px",
+                backgroundColor: "#fff"
+              }}
+              onWheel={(e) => {
+                if (editorScrollRef.current) {
+                  e.preventDefault();
+                  editorScrollRef.current.scrollTop += e.deltaY;
+                }
+              }}
             >
               <div
                 style={{
                   position: "relative",
-                  width: `${EDITOR_WIDTH}px`,
-                  height: `${EDITOR_HEIGHT}px`,
+                  minHeight: "100%",
+                  width: "100%",
                   backgroundColor: "white",
                   overflow: "hidden",
                 }}
@@ -839,7 +896,8 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
                 <PdfViewer
                   file={pdfDataUrl}
                   fileName={documentInfo?.fileName}
-                  containerHeight={`${EDITOR_HEIGHT}px`}
+                  scrollContainerRef={pdfScrollRef}
+                  containerHeight="100%"
                   showControls={false}
                   pageWidth={EDITOR_WIDTH}
                   noInternalScroll={false}

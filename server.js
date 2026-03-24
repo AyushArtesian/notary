@@ -4123,6 +4123,21 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle document scroll synchronization
+  socket.on('documentScrolled', (data) => {
+    const userSession = userSessions.get(socket.id);
+    if (userSession && (data?.scrollPosition !== undefined || data?.scrollRatio !== undefined)) {
+      console.log(`📍 Scroll event from ${userSession.username} (${userSession.role}):`, data.scrollPosition);
+      socket.to(userSession.roomId).emit('documentScrolled', {
+        scrollPosition: data.scrollPosition,
+        scrollRatio: data.scrollRatio,
+        sessionId: data.sessionId,
+        timestamp: data.timestamp,
+        fromRole: userSession.role,
+      });
+    }
+  });
+
   // Handle user disconnect
   socket.on('disconnect', () => {
     const userSession = userSessions.get(socket.id);
