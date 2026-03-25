@@ -665,7 +665,7 @@ const OwnerPage = () => {
         <ScreenRecorder role="owner" sessionId={sessionId || ""} socket={socket} />
 
         {/* Main Content Area */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, backgroundColor: "#f2f2f2", padding: "12px" }}>
           <h3 style={{ margin: "0 0 10px 0" }}>Document Editor</h3>
           {uploadedFile && (
             <div
@@ -677,7 +677,7 @@ const OwnerPage = () => {
                   position: "relative",
                   width: `${EDITOR_WIDTH}px`,
                   height: `${EDITOR_HEIGHT}px`,
-                  backgroundColor: "white",
+                  backgroundColor: "#f2f2f2",
                   overflow: "hidden",
                 }}
               >

@@ -61,9 +61,9 @@ const PdfViewer = ({
   };
 
   return (
-    <div className="pdf-viewer" style={{ height: containerHeight, display: "flex", flexDirection: "column" }}>
+    <div className="pdf-viewer" style={{ height: containerHeight, display: "flex", flexDirection: "column", backgroundColor: "#d9d9d9" }}>
       {showControls && isPdfFile && (
-        <div className="pdf-controls" style={{ padding: "10px", backgroundColor: "#f0f0f0", borderBottom: "1px solid #ccc" }}>
+        <div className="pdf-controls" style={{ padding: "10px", backgroundColor: "#e0e0e0", borderBottom: "1px solid #ccc", color: "#333" }}>
           <button onClick={goToPreviousPage} disabled={pageNumber <= 1}>
             ← Previous
           </button>
@@ -79,7 +79,7 @@ const PdfViewer = ({
       <div
         ref={setScrollContainerRef}
         onScroll={onViewerScroll}
-        style={{ flex: 1, overflow: noInternalScroll ? "visible" : "auto", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: "10px" }}
+        style={{ flex: 1, overflow: noInternalScroll ? "visible" : "auto", display: "flex", justifyContent: "center", alignItems: "flex-start", padding: "10px", backgroundColor: "#d9d9d9" }}
       >
         {file ? (
           isPdfFile ? (
