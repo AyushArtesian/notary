@@ -2,6 +2,10 @@ import React, { Component } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import OwnerPage from './pages/OwnerPage'
 import OwnerDashboardPage from './pages/OwnerDashboardPage'
+import OwnerDocDashboardWrapper from './pages/OwnerDocDashboardWrapper'
+import OwnerHomeDashboardPage from './pages/OwnerHomeDashboardPage'
+import OwnerTransactionsPage from './pages/OwnerTransactionsPage'
+import OwnerMeetingsPage from './pages/OwnerMeetingsPage'
 import OwnerDocumentViewPage from './pages/OwnerDocumentViewPage'
 import OwnerSessionPage from './pages/OwnerSessionPage'
 import NotaryPage from './pages/NotaryPage'
@@ -63,7 +67,7 @@ const getAuthUser = () => {
 }
 
 const getDefaultRouteByRole = (role) => {
-  if (role === 'owner') return '/owner/doc/dashboard'
+  if (role === 'owner') return '/owner/dashboard'
   if (role === 'notary') return '/notary/dashboard'
   if (role === 'admin') return '/admin'
   return null
@@ -212,6 +216,42 @@ function App() {
             element={<HomePage />}
           />
           <Route
+            path="/owner/dashboard"
+            element={
+              <RequireAuth>
+                <RequireRole allowedRoles={['owner']}>
+                  <RequireKbaApproval>
+                    <OwnerHomeDashboardPage />
+                  </RequireKbaApproval>
+                </RequireRole>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/owner/transactions"
+            element={
+              <RequireAuth>
+                <RequireRole allowedRoles={['owner']}>
+                  <RequireKbaApproval>
+                    <OwnerTransactionsPage />
+                  </RequireKbaApproval>
+                </RequireRole>
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/owner/meetings"
+            element={
+              <RequireAuth>
+                <RequireRole allowedRoles={['owner']}>
+                  <RequireKbaApproval>
+                    <OwnerMeetingsPage />
+                  </RequireKbaApproval>
+                </RequireRole>
+              </RequireAuth>
+            }
+          />
+          <Route
             path="/owner/session"
             element={
               <RequireAuth>
@@ -229,7 +269,7 @@ function App() {
               <RequireAuth>
                 <RequireRole allowedRoles={['owner']}>
                   <RequireKbaApproval>
-                    <OwnerDashboardPage />
+                    <OwnerDocDashboardWrapper />
                   </RequireKbaApproval>
                 </RequireRole>
               </RequireAuth>

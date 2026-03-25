@@ -890,7 +890,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       />
 
       {/* Main Content */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "15px", overflowY: "auto", position: "relative" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "15px", overflowY: "auto", position: "relative", backgroundColor: "#f2f2f2" }}>
         {/* Header */}
         <div style={{ marginBottom: "15px", backgroundColor: "#f3e5f5", padding: "15px", borderRadius: "5px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
@@ -1029,7 +1029,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
                 overflowY: "auto",
                 border: "1px solid #ddd",
                 borderRadius: "5px",
-                backgroundColor: "#fff"
+                backgroundColor: "#f2f2f2"
               }}
               onWheel={(e) => {
                 if (editorScrollRef.current) {

@@ -465,7 +465,7 @@ const SessionPaymentModal = ({
   );
 };
 
-const OwnerDashboardPage = () => {
+const OwnerDashboardPage = ({ setHideSidebar }) => {
   const restoredDashboardState = loadDashboardState();
   const [docs, setDocs] = useState([]);
   const [notarizingDoc, setNotarizingDoc] = useState(null);
@@ -545,6 +545,17 @@ const OwnerDashboardPage = () => {
     setSessionId(id);
     localStorage.setItem("notary.ownerSessionId", id);
   }, [navigate]);
+
+  // Sync sidebar visibility with session state (on mount and refresh)
+  useEffect(() => {
+    if (setHideSidebar) {
+      if (sessionJoined && activeSessionDocId) {
+        setHideSidebar(true);
+      } else {
+        setHideSidebar(false);
+      }
+    }
+  }, [sessionJoined, activeSessionDocId, setHideSidebar]);
 
   useEffect(() => {
     localStorage.setItem(ACTIVE_SESSIONS_KEY, JSON.stringify(activeSessions));
@@ -1184,6 +1195,12 @@ const OwnerDashboardPage = () => {
       previousSessions[doc.id] ||
       doc.sessionId;
     if (sessionIdVal) {
+      // Keep URL/session state aligned with the exact session being resumed.
+      setSessionId(sessionIdVal);
+      localStorage.setItem("notary.ownerSessionId", sessionIdVal);
+      localStorage.setItem("notary.lastSessionId", sessionIdVal);
+      navigate(`/owner/doc/dashboard?sessionId=${encodeURIComponent(sessionIdVal)}`, { replace: true });
+
       setActiveSessions((prev) => ({ ...prev, [doc.id]: sessionIdVal }));
       setActiveSessionDocId(doc.id);
       addPreviousSession(doc.id, sessionIdVal);
@@ -1199,6 +1216,7 @@ const OwnerDashboardPage = () => {
       
       // Immediately show the editor view
       setSessionJoined(true);
+      if (setHideSidebar) setHideSidebar(true);
     }
   };
 
@@ -1214,6 +1232,10 @@ const OwnerDashboardPage = () => {
       // Share document with notary via socket
       const sessionIdVal = activeSessions[activeSessionDocId] || previousSessions[activeSessionDocId];
       if (sessionIdVal) {
+        setSessionId(sessionIdVal);
+        localStorage.setItem("notary.ownerSessionId", sessionIdVal);
+        localStorage.setItem("notary.lastSessionId", sessionIdVal);
+        navigate(`/owner/doc/dashboard?sessionId=${encodeURIComponent(sessionIdVal)}`, { replace: true });
         socket.emit("documentShared", { pdfDataUrl: doc.dataUrl, fileName: doc.name || "document.pdf" });
       }
     }
@@ -1280,6 +1302,7 @@ const OwnerDashboardPage = () => {
     setUploadedAsset(null);
     lastAutoSharedDocKeyRef.current = "";
     localStorage.removeItem(DASHBOARD_STATE_KEY);
+    localStorage.setItem('owner.sessionActive', 'false');
     // Also clear the active session for this document when exiting
     setActiveSessions((prev) => {
       const updated = { ...prev };
@@ -1287,7 +1310,8 @@ const OwnerDashboardPage = () => {
       return updated;
     });
 
-    navigate("/owner/doc/dashboard");
+    if (setHideSidebar) setHideSidebar(false);
+    navigate("/owner/dashboard");
   };
 
   const restoreUploadedAssets = () => {
@@ -1661,7 +1685,7 @@ const OwnerDashboardPage = () => {
       {/* If session joined, show editor view */}
       {activeSessionDocId && sessionJoined ? (
         <div style={{ display: "flex", height: "100vh" }}>
-          {/* Sidebar */}
+          {/* Asset Sidebar (owner session) */}
           <SidebarAssets
             userRole="owner"
             sessionId={activeSessions[activeSessionDocId] || previousSessions[activeSessionDocId]}
@@ -1691,7 +1715,7 @@ const OwnerDashboardPage = () => {
                       lineHeight: 1,
                       marginRight: "10px",
                     }}
-                    title="Back to Notaries"
+                    title="Back to Dashboard"
                   >
                     ←
                   </button>

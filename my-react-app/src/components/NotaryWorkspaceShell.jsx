@@ -2,11 +2,19 @@ import React from 'react';
 import NotarySidebar from './NotarySidebar';
 import './NotaryWorkspaceShell.css';
 
-const NotaryWorkspaceShell = ({ title, subtitle, actions = null, children }) => {
+const NotaryWorkspaceShell = ({
+  title,
+  subtitle,
+  actions = null,
+  children,
+  sidebarRole = 'notary',
+  customMenuItems,
+  hideSidebar = false,
+}) => {
   return (
     <div className="notary-workspace-layout">
-      <NotarySidebar />
-      <div className="notary-workspace-main">
+      {!hideSidebar && <NotarySidebar role={sidebarRole} menuItems={customMenuItems} />}
+      <div className="notary-workspace-main" style={{ marginLeft: hideSidebar ? 0 : '232px' }}>
         <header className="notary-workspace-header">
           <div>
             <h1>{title}</h1>
