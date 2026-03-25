@@ -546,6 +546,17 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     localStorage.setItem("notary.ownerSessionId", id);
   }, [navigate]);
 
+  // Sync sidebar visibility with session state (on mount and refresh)
+  useEffect(() => {
+    if (setHideSidebar) {
+      if (sessionJoined && activeSessionDocId) {
+        setHideSidebar(true);
+      } else {
+        setHideSidebar(false);
+      }
+    }
+  }, [sessionJoined, activeSessionDocId, setHideSidebar]);
+
   useEffect(() => {
     localStorage.setItem(ACTIVE_SESSIONS_KEY, JSON.stringify(activeSessions));
   }, [activeSessions]);
@@ -1184,6 +1195,12 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       previousSessions[doc.id] ||
       doc.sessionId;
     if (sessionIdVal) {
+      // Keep URL/session state aligned with the exact session being resumed.
+      setSessionId(sessionIdVal);
+      localStorage.setItem("notary.ownerSessionId", sessionIdVal);
+      localStorage.setItem("notary.lastSessionId", sessionIdVal);
+      navigate(`/owner/doc/dashboard?sessionId=${encodeURIComponent(sessionIdVal)}`, { replace: true });
+
       setActiveSessions((prev) => ({ ...prev, [doc.id]: sessionIdVal }));
       setActiveSessionDocId(doc.id);
       addPreviousSession(doc.id, sessionIdVal);
@@ -1215,6 +1232,10 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       // Share document with notary via socket
       const sessionIdVal = activeSessions[activeSessionDocId] || previousSessions[activeSessionDocId];
       if (sessionIdVal) {
+        setSessionId(sessionIdVal);
+        localStorage.setItem("notary.ownerSessionId", sessionIdVal);
+        localStorage.setItem("notary.lastSessionId", sessionIdVal);
+        navigate(`/owner/doc/dashboard?sessionId=${encodeURIComponent(sessionIdVal)}`, { replace: true });
         socket.emit("documentShared", { pdfDataUrl: doc.dataUrl, fileName: doc.name || "document.pdf" });
       }
     }
