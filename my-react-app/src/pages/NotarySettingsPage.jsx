@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import NotaryWorkspaceShell from '../components/NotaryWorkspaceShell';
 import { deleteAsset, fetchAssets, saveAsset } from '../utils/apiClient';
 import './NotaryWorkspacePages.css';
 
 const STORAGE_KEY = 'notary.settings';
+const DEVICE_PREFS_STORAGE_KEY = 'notary.devicePreferences';
 
 const defaultSettings = {
   displayName: '',
@@ -12,6 +13,12 @@ const defaultSettings = {
   availability: 'weekday',
   emailNotifications: true,
   smsNotifications: true,
+};
+
+const defaultDevicePrefs = {
+  videoDeviceId: '',
+  audioDeviceId: '',
+  outputDeviceId: '',
 };
 
 const toDataUrl = (file) =>
@@ -25,6 +32,11 @@ const toDataUrl = (file) =>
 const NotarySettingsPage = () => {
   const [settings, setSettings] = useState(defaultSettings);
   const [notice, setNotice] = useState('');
+  const [devices, setDevices] = useState({ videos: [], audios: [], outputs: [] });
+  const [devicePrefs, setDevicePrefs] = useState(defaultDevicePrefs);
+  const [previewStream, setPreviewStream] = useState(null);
+  const [previewError, setPreviewError] = useState('');
+  const videoRef = useRef(null);
 
   const [templates, setTemplates] = useState([]);
   const [templateName, setTemplateName] = useState('');
@@ -77,18 +89,96 @@ const NotarySettingsPage = () => {
       ...stored,
     });
 
+    let deviceStored = {};
+    try {
+      deviceStored = JSON.parse(localStorage.getItem(DEVICE_PREFS_STORAGE_KEY) || 'null') || {};
+    } catch {
+      deviceStored = {};
+    }
+    setDevicePrefs({ ...defaultDevicePrefs, ...deviceStored });
+
     loadTemplates();
+  }, []);
+
+  useEffect(() => {
+    const loadDevices = async () => {
+      if (!navigator.mediaDevices?.enumerateDevices) {
+        return;
+      }
+
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setDevices({
+        videos: all.filter((d) => d.kind === 'videoinput'),
+        audios: all.filter((d) => d.kind === 'audioinput'),
+        outputs: all.filter((d) => d.kind === 'audiooutput'),
+      });
+    };
+
+    loadDevices();
   }, []);
 
   const setField = (key, value) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
   };
 
+  const setDeviceField = (key, value) => {
+    setDevicePrefs((prev) => ({ ...prev, [key]: value }));
+  };
+
   const saveSettings = () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    localStorage.setItem(DEVICE_PREFS_STORAGE_KEY, JSON.stringify(devicePrefs));
     setNotice('Settings saved.');
     window.setTimeout(() => setNotice(''), 2200);
   };
+
+  const startPreview = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setPreviewError('Media devices are not supported in this browser.');
+      return;
+    }
+
+    if (previewStream) {
+      setPreviewError('Preview is already running. Stop first to restart.');
+      return;
+    }
+
+    const constraints = {
+      video: devicePrefs.videoDeviceId ? { deviceId: { exact: devicePrefs.videoDeviceId } } : true,
+      audio: devicePrefs.audioDeviceId ? { deviceId: { exact: devicePrefs.audioDeviceId } } : false,
+    };
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      setPreviewStream(stream);
+      setPreviewError('');
+    } catch (err) {
+      setPreviewError(`Failed to start preview: ${err?.message || 'permission denied or no device'}`);
+      console.error(err);
+    }
+  };
+
+  const stopPreview = () => {
+    if (!previewStream) {
+      return;
+    }
+
+    previewStream.getTracks().forEach((track) => track.stop());
+    setPreviewStream(null);
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      stopPreview();
+    };
+  }, [previewStream]);
 
   const handleUploadTemplate = async (event) => {
     const file = event.target.files?.[0];
@@ -190,6 +280,78 @@ const NotarySettingsPage = () => {
       </section>
 
       <section className="notary-card">
+        <div className="notary-card-header">Device Preferences</div>
+        <div className="notary-card-body">
+          <div className="form-grid">
+            <div className="form-row">
+              <label>Camera</label>
+              <select
+                value={devicePrefs.videoDeviceId}
+                onChange={(e) => setDeviceField('videoDeviceId', e.target.value)}
+              >
+                <option value="">Default Camera</option>
+                {devices.videos.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label || `Camera ${device.deviceId.slice(0, 8)}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-row">
+              <label>Microphone</label>
+              <select
+                value={devicePrefs.audioDeviceId}
+                onChange={(e) => setDeviceField('audioDeviceId', e.target.value)}
+              >
+                <option value="">Default Microphone</option>
+                {devices.audios.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label || `Microphone ${device.deviceId.slice(0, 8)}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-row">
+              <label>Speaker</label>
+              <select
+                value={devicePrefs.outputDeviceId}
+                onChange={(e) => setDeviceField('outputDeviceId', e.target.value)}
+              >
+                <option value="">Default Speaker</option>
+                {devices.outputs.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label || `Speaker ${device.deviceId.slice(0, 8)}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="inline-actions">
+            <button className="notary-btn" type="button" onClick={startPreview}>
+              Start Preview
+            </button>
+            <button className="notary-btn secondary" type="button" onClick={stopPreview}>
+              Stop Preview
+            </button>
+          </div>
+
+          {previewError ? <p className="muted">{previewError}</p> : null}
+          <div style={{ marginTop: 10 }}>
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              style={{ width: '100%', maxHeight: 320, display: previewStream ? 'block' : 'none', border: '1px solid #cbd5e1', borderRadius: 8 }}
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="notary-card">
         <div className="notary-card-header">Upload Document Template</div>
         <div className="notary-card-body">
           <div className="form-grid">
@@ -217,10 +379,6 @@ const NotarySettingsPage = () => {
           {uploading ? <p className="muted">Uploading template...</p> : null}
           {error ? <p className="muted">{error}</p> : null}
         </div>
-      </section>
-
-      <section className="notary-card">
-        <div className="notary-card-header">Document Templates</div>
         <div className="notary-card-body notary-table-wrap">
           {templates.length === 0 ? <div className="empty-block">No templates uploaded yet.</div> : null}
           {templates.length > 0 ? (
