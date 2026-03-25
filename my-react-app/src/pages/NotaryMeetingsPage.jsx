@@ -284,7 +284,11 @@ const NotaryMeetingsPage = () => {
                   <td>{formatDate(row.scheduledAt)}</td>
                   <td>{formatDate(startTime)}</td>
                   <td>{formatDate(endTime)}</td>
-                  <td>{row.status || row.notaryReview || '-'}</td>
+                  <td>
+                    <span className={`status-chip ${String((row.status || row.notaryReview || '').toLowerCase()).replace(/\s+/g, '_')}`}>
+                      {String(row.status || row.notaryReview || '-').replace('_', ' ')}
+                    </span>
+                  </td>
                   <td>{renderActions(row, type)}</td>
               </tr>
               );

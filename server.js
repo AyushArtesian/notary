@@ -3754,6 +3754,11 @@ app.delete('/api/owner-documents/:id', requireAuth, requireRole(['owner']), requ
       return res.status(403).json({ error: 'Forbidden: you can only delete your own documents' });
     }
 
+    const isAlreadyNotarized = Boolean(existing.notarized) || String(existing.status || '').trim().toLowerCase() === 'notarized';
+    if (isAlreadyNotarized) {
+      return res.status(403).json({ error: 'Forbidden: notarized documents cannot be deleted' });
+    }
+
     dbRun('DELETE FROM owner_documents WHERE id = :id', { id });
     persistDatabase();
 

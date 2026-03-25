@@ -75,7 +75,7 @@ const NotaryDashboardPage = () => {
                   <p className="kpi-value">{summary.scheduledMeetings}</p>
                 </div>
                 <div className="kpi-item">
-                  <p className="kpi-label">On demand Calls</p>
+                  <p className="kpi-label">Witness Calls</p>
                   <p className="kpi-value">{summary.onDemandCalls}</p>
                 </div>
               </div>

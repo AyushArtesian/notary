@@ -186,12 +186,24 @@ const ThreeDotsMenu = ({ onView, onDownload, onNotarize, onCancelNotarize, onDel
             </button>
           )}
           <button
-            onClick={() => { setOpen(false); onDelete(); }}
-            style={{ ...menuItemStyle, color: "#b91c1c" }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "#fef2f2")}
+            onClick={() => {
+              if (notarized) {
+                return;
+              }
+              setOpen(false);
+              onDelete();
+            }}
+            style={{
+              ...menuItemStyle,
+              color: notarized ? "#9ca3af" : "#b91c1c",
+              cursor: notarized ? "not-allowed" : "pointer",
+            }}
+            disabled={notarized}
+            title={notarized ? "Cannot delete fully notarized document" : "Delete document"}
+            onMouseEnter={(e) => (e.currentTarget.style.background = notarized ? "#fff" : "#fef2f2")}
             onMouseLeave={(e) => (e.currentTarget.style.background = "#fff")}
           >
-            🗑 Delete
+            🗑 {notarized ? "Cannot delete" : "Delete"}
           </button>
         </div>
       )}
@@ -1384,6 +1396,12 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
   };
 
   const handleDelete = async (doc) => {
+    const isDocNotarized = Boolean(doc.notarized) || String(doc.status || '').trim().toLowerCase() === 'notarized';
+    if (isDocNotarized) {
+      alert('Cannot delete a notarized document.');
+      return;
+    }
+
     const previous = docs;
     const updated = docs.filter((d) => d.id !== doc.id);
     setDocs(updated);
@@ -1399,7 +1417,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       console.error("Failed to delete owner document:", error);
       setDocs(previous);
       saveDocs(previous);
-      alert("Failed to delete document. Please try again.");
+      alert(error?.message || "Failed to delete document. Please try again.");
     }
   };
 
