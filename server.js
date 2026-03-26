@@ -48,16 +48,37 @@ const PORT = parsePort(process.env.PORT, 5000);
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
-// CORS configuration for production
+const STATIC_ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  FRONTEND_URL,
+  'https://notaryqwe45r67857.vercel.app',
+  'https://notary-platform.vercel.app',
+].filter(Boolean);
+
+const isDevTunnelOrigin = (origin) => {
+  try {
+    const host = new URL(origin).hostname;
+    return /(^|\.)devtunnels\.ms$/i.test(host);
+  } catch {
+    return false;
+  }
+};
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  if (STATIC_ALLOWED_ORIGINS.includes(origin)) return true;
+  if (isDevTunnelOrigin(origin)) return true;
+  return false;
+};
+
+// CORS configuration with explicit allow-list + devtunnel support.
 const corsOptions = {
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://localhost:5174',
-    FRONTEND_URL,
-    'https://notaryqwe45r67857.vercel.app', // Your actual Vercel domain
-    'https://notary-platform.vercel.app', // Fallback Vercel domain
-  ],
+  origin: (origin, callback) => {
+    if (isAllowedOrigin(origin)) return callback(null, true);
+    return callback(new Error(`CORS blocked origin: ${origin}`));
+  },
   methods: ['GET', 'POST', 'DELETE', 'PUT'],
   credentials: true,
 };

@@ -465,6 +465,49 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     };
   }, [sessionJoined, sessionId, documentId, documentInfo?.fileName]);
 
+  useEffect(() => {
+    if (!sessionJoined || !sessionId || pdfDataUrl) return;
+    if (!ownerConnected) return;
+
+    let disposed = false;
+
+    const hydrateSessionPdf = async () => {
+      try {
+        const docs = await fetchOwnerDocuments({ sessionId });
+        if (disposed || !Array.isArray(docs) || docs.length === 0) return;
+
+        const preferredDoc =
+          docs.find((d) => d.id && documentId && String(d.id) === String(documentId)) ||
+          docs.find((d) => String(d.status || '').toLowerCase() === 'session_started') ||
+          docs.find((d) => String(d.status || '').toLowerCase() === 'accepted') ||
+          docs[0];
+
+        if (!preferredDoc) return;
+
+        if (preferredDoc.dataUrl) {
+          setPdfDataUrl(preferredDoc.dataUrl);
+          setDocumentInfo((prev) => ({
+            ...(prev || {}),
+            fileName: preferredDoc.name || prev?.fileName || 'document.pdf',
+          }));
+          if (!documentId && preferredDoc.id) {
+            setDocumentId(preferredDoc.id);
+          }
+        }
+      } catch (error) {
+        if (!disposed) {
+          console.warn('[NOTARY] Failed to hydrate session PDF from backend:', error?.message || error);
+        }
+      }
+    };
+
+    hydrateSessionPdf();
+
+    return () => {
+      disposed = true;
+    };
+  }, [sessionJoined, sessionId, ownerConnected, pdfDataUrl, documentId]);
+
   // Scroll synchronization: emit notary's scroll position to signer.
   // Listen to outer editor container which receives all scroll events.
   useEffect(() => {

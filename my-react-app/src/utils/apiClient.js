@@ -7,10 +7,26 @@ const configuredApiBaseUrl =
 const isDev = Boolean(import.meta.env.DEV);
 const DEV_LOCAL_API_BASES = ['http://localhost:5000', 'http://localhost:5001', 'http://localhost:5002'];
 const API_BASE_STORAGE_KEY = 'notary.apiBaseUrl';
+const isBrowser = typeof window !== 'undefined';
+const currentHostname = isBrowser ? window.location.hostname : '';
+const isLocalhost = currentHostname === 'localhost' || currentHostname === '127.0.0.1';
+
+const deriveDevTunnelApiFromWindowOrigin = () => {
+  if (!isBrowser) return '';
+  const apiPort = String(import.meta.env.VITE_API_PORT || '5000').trim();
+  const origin = window.location.origin;
+  // Example: https://abc-5173.euw.devtunnels.ms -> https://abc-5000.euw.devtunnels.ms
+  return origin.replace(/-(\d+)(\.[^.]+\.devtunnels\.ms)$/i, `-${apiPort}$2`);
+};
+
+const devTunnelDerivedApi = deriveDevTunnelApiFromWindowOrigin();
+
 const API_BASE_CANDIDATES = [
-  ...(isDev ? DEV_LOCAL_API_BASES : []),
+  ...(isDev && isLocalhost ? DEV_LOCAL_API_BASES : []),
   configuredApiBaseUrl,
-  (typeof window !== 'undefined' ? window.location.origin : ''),
+  devTunnelDerivedApi,
+  (isBrowser ? window.location.origin : ''),
+  ...(isDev && !isLocalhost ? DEV_LOCAL_API_BASES : []),
 ].filter((v) => typeof v === 'string' && v.trim() !== '');
 
 // Deduplicate while preserving order

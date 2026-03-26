@@ -9,6 +9,11 @@ const getStoredAuthToken = () => {
   }
 };
 
+const deriveDevTunnelSocketUrl = (origin, fallbackPort = '5000') => {
+  // Example: https://abc-5173.euw.devtunnels.ms -> https://abc-5000.euw.devtunnels.ms
+  return String(origin || '').replace(/-(\d+)(\.[^.]+\.devtunnels\.ms)$/i, `-${fallbackPort}$2`);
+};
+
 // Detect socket server URL based on current host and env variables
 const getSocketUrl = () => {
   const env =
@@ -20,12 +25,14 @@ const getSocketUrl = () => {
   const isLocalhost =
     window.location.hostname === 'localhost' ||
     window.location.hostname === '127.0.0.1';
+  const derivedTunnelUrl = deriveDevTunnelSocketUrl(window.location.origin, import.meta.env.VITE_SOCKET_PORT || '5000');
 
   const localSocketCandidates = ['http://localhost:5001', 'http://localhost:5000', 'http://localhost:5002'];
 
   const fallbackUrls = [
     ...(isLocalhost ? localSocketCandidates : []),
     env,
+    derivedTunnelUrl,
     window.location.origin,
     ...(!isLocalhost ? localSocketCandidates : []),
   ].filter((url) => !!url);
@@ -41,7 +48,7 @@ const getSocketUrl = () => {
     return envIsLocal ? env : localSocketCandidates[0];
   }
 
-  return env || window.location.origin;
+  return env || derivedTunnelUrl || window.location.origin;
 };
 
 const SOCKET_SERVER_URL = getSocketUrl();
