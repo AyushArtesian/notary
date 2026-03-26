@@ -1001,8 +1001,8 @@ function upsertSessionParticipant({ sessionId, socketId, userId, username, role 
     notaryIds = Array.from(new Set([...notaryIds, userId]));
   }
 
-  const ownerId = role === 'owner' ? (userId || null) : (existing?.ownerId || null);
-  const ownerUsername = role === 'owner' ? (username || null) : (existing?.ownerUsername || null);
+  const ownerId = role === 'signer' ? (userId || null) : (existing?.ownerId || null);
+  const ownerUsername = role === 'signer' ? (username || null) : (existing?.ownerUsername || null);
 
   const data = {
     sessionId,
@@ -1042,7 +1042,7 @@ function removeSessionParticipant(sessionId, socketId) {
     new Set(participants.filter((p) => p.role === 'notary').map((p) => p.userId))
   );
 
-  const owner = participants.find((p) => p.role === 'owner');
+  const signer = participants.find((p) => p.role === 'signer');
   const active = participants.length > 0 ? 1 : 0;
 
   dbRun(
@@ -1050,8 +1050,8 @@ function removeSessionParticipant(sessionId, socketId) {
     {
       participants: JSON.stringify(participants),
       notaryIds: JSON.stringify(notaryIds),
-      ownerId: owner?.userId || null,
-      ownerUsername: owner?.username || null,
+      ownerId: signer?.userId || null,
+      ownerUsername: signer?.username || null,
       active,
       updatedAt: now(),
       sessionId,
@@ -1059,7 +1059,7 @@ function removeSessionParticipant(sessionId, socketId) {
   );
 
   persistDatabase();
-  return { sessionId, participants, notaryIds, ownerId: owner?.userId, ownerUsername: owner?.username, active };
+  return { sessionId, participants, notaryIds, ownerId: signer?.userId, ownerUsername: signer?.username, active };
 }
 
 
@@ -1087,7 +1087,12 @@ const normalizeRoomId = (value) => {
   return match ? match[0] : raw;
 };
 
-const normalizeRole = (value) => String(value || '').trim().toLowerCase();
+const normalizeRole = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  // Backward compatibility for legacy records and tokens.
+  if (normalized === 'owner') return 'signer';
+  return normalized;
+};
 const normalizeKbaStatus = (value) => String(value || '').trim().toLowerCase();
 
 const AUTH_SECRET = process.env.AUTH_SECRET || 'notary-dev-auth-secret';
@@ -1136,7 +1141,7 @@ function isKbaApprovedStatus(value) {
 }
 
 function shouldRequireKbaForRole(role) {
-  return ['owner', 'notary'].includes(normalizeRole(role));
+  return ['signer', 'notary'].includes(normalizeRole(role));
 }
 
 function isValidEmailAddress(value) {
@@ -1764,8 +1769,8 @@ app.post('/api/auth/register', (req, res) => {
       return res.status(400).json({ error: 'All fields are required.' });
     }
 
-    if (!['owner', 'notary'].includes(role)) {
-      return res.status(400).json({ error: 'Role must be owner or notary.' });
+    if (!['signer', 'notary'].includes(role)) {
+      return res.status(400).json({ error: 'Role must be signer or notary.' });
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -2435,7 +2440,7 @@ app.get('/api/admin/overview', (req, res) => {
 
     const usersWithWork = users.map((user) => {
       const role = normalizeRole(user.role);
-      const ownedDocs = role === 'owner'
+      const ownedDocs = role === 'signer'
         ? documents.filter((doc) => doc.ownerId === user.userId)
         : [];
       const reviewedDocs = role === 'notary'
@@ -2485,7 +2490,7 @@ app.get('/api/admin/overview', (req, res) => {
 
     const summary = {
       totalUsers: users.length,
-      owners: users.filter((u) => normalizeRole(u.role) === 'owner').length,
+      signers: users.filter((u) => normalizeRole(u.role) === 'signer').length,
       notaries: users.filter((u) => normalizeRole(u.role) === 'notary').length,
       admins: users.filter((u) => normalizeRole(u.role) === 'admin').length,
       totalDocuments: documents.length,
@@ -2568,8 +2573,8 @@ app.put('/api/admin/users/:userId', (req, res) => {
       return res.status(400).json({ error: 'username and email are required' });
     }
 
-    if (!['owner', 'notary', 'admin'].includes(incomingRole)) {
-      return res.status(400).json({ error: 'role must be owner, notary, or admin' });
+    if (!['signer', 'notary', 'admin'].includes(incomingRole)) {
+      return res.status(400).json({ error: 'role must be signer, notary, or admin' });
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(incomingEmail)) {
@@ -2997,7 +3002,7 @@ app.get('/api/recordings', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/recordings/upload', requireAuth, requireRole(['notary', 'owner']), async (req, res) => {
+app.post('/api/recordings/upload', requireAuth, requireRole(['notary', 'signer']), async (req, res) => {
   const nowMs = now();
   const recordingId = crypto.randomUUID();
 
@@ -3160,7 +3165,7 @@ app.post('/api/documents', (req, res) => {
       notarized,
     } = req.body;
 
-    const safeOwnerName = String(ownerName || '').trim() || 'Owner';
+    const safeOwnerName = String(ownerName || '').trim() || 'Signer';
 
     if (!id || !sessionId || !ownerId || !name) {
       return res.status(400).json({ error: 'Missing required fields: id, sessionId, ownerId, name' });
@@ -3252,7 +3257,7 @@ app.post('/api/documents', (req, res) => {
   }
 });
 
-// Get documents (optionally scoped to a session or owner)
+// Get documents (optionally scoped to a session or signer)
 app.get('/api/documents', (req, res) => {
   try {
     const { sessionId, ownerId } = req.query;
@@ -3272,7 +3277,7 @@ app.get('/api/documents', (req, res) => {
   }
 });
 
-// Get all notarized documents (optionally scoped to a session or owner)
+// Get all notarized documents (optionally scoped to a session or signer)
 app.get('/api/documents/notarized', (req, res) => {
   try {
     const { sessionId, ownerId } = req.query;
@@ -3318,7 +3323,7 @@ app.put('/api/documents/:id/review', (req, res) => {
     const notarized = status === 'notarized' ? 1 : 0;
     const notarizedAt = notarized ? nowMs : null;
 
-    // Update owner documents (documents table has been removed).
+    // Update signer documents (documents table has been removed).
     dbRun(
       `
       UPDATE owner_documents
@@ -3370,15 +3375,15 @@ app.put('/api/documents/:id/review', (req, res) => {
   }
 });
 
-// Mark an owner document as fully notarized (after session completion)
-app.put('/api/owner-documents/:id/notarize', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
+// Mark an signer document as fully notarized (after session completion)
+app.put('/api/signer-documents/:id/notarize', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
     const { notaryName, notarizedDataUrl, sessionAmount } = req.body;
 
     const existing = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!existing) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
     if (existing.notaryId && String(existing.notaryId) !== String(req.auth?.userId || '')) {
       return res.status(409).json({ error: 'This document is locked by another notary' });
@@ -3454,7 +3459,7 @@ app.put('/api/owner-documents/:id/notarize', requireAuth, requireRole(['notary']
 
     const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!document) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
 
     // Record the notary call
@@ -3522,13 +3527,13 @@ app.put('/api/owner-documents/:id/notarize', requireAuth, requireRole(['notary']
 
     res.json(document);
   } catch (error) {
-    console.error('Error marking owner document notarized:', error);
+    console.error('Error marking signer document notarized:', error);
     res.status(500).json({ error: 'Failed to mark document as notarized' });
   }
 });
 
-// OWNER notarize endpoint - Owner marks their document as notarized (ready for notary review)
-app.post('/api/owner-documents/:id/owner-notarize', requireAuth, requireRole(['owner']), requireKbaApproved, (req, res) => {
+// SIGNER notarize endpoint - Signer marks their document as notarized (ready for notary review)
+app.post('/api/signer-documents/:id/signer-notarize', requireAuth, requireRole(['signer']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
     const existing = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
@@ -3537,7 +3542,7 @@ app.post('/api/owner-documents/:id/owner-notarize', requireAuth, requireRole(['o
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    // Verify owner owns this document
+    // Verify signer owns this document
     if (String(existing.ownerId) !== String(req.auth.userId)) {
       return res.status(403).json({ error: 'You can only notarize your own documents' });
     }
@@ -3551,7 +3556,7 @@ app.post('/api/owner-documents/:id/owner-notarize', requireAuth, requireRole(['o
       return res.status(409).json({ error: 'This document is already accepted by a notary' });
     }
 
-    // Owner requests notarization review. This is not the final notarized state.
+    // Signer requests notarization review. This is not the final notarized state.
     dbRun(
       `UPDATE owner_documents
        SET status = :status,
@@ -3631,13 +3636,13 @@ app.post('/api/owner-documents/:id/owner-notarize', requireAuth, requireRole(['o
 
     res.json(document);
   } catch (error) {
-    console.error('Error notarizing owner document:', error);
+    console.error('Error notarizing signer document:', error);
     res.status(500).json({ error: 'Failed to notarize document' });
   }
 });
 
-// Owner document endpoints (stored separately from session documents)
-app.post('/api/owner-documents', requireAuth, requireRole(['owner']), requireKbaApproved, (req, res) => {
+// Signer document endpoints (stored separately from session documents)
+app.post('/api/signer-documents', requireAuth, requireRole(['signer']), requireKbaApproved, (req, res) => {
   try {
     const {
       id,
@@ -3652,14 +3657,14 @@ app.post('/api/owner-documents', requireAuth, requireRole(['owner']), requireKba
       status,
     } = req.body;
 
-    const safeOwnerName = String(ownerName || '').trim() || 'Owner';
+    const safeOwnerName = String(ownerName || '').trim() || 'Signer';
 
     if (!id || !name) {
       return res.status(400).json({ error: 'Missing required fields: id, name' });
     }
 
     if (ownerId && String(ownerId) !== String(req.auth.userId)) {
-      return res.status(403).json({ error: 'Owner mismatch: cannot create a document for another user' });
+      return res.status(403).json({ error: 'Signer mismatch: cannot create a document for another user' });
     }
 
     const nowMs = now();
@@ -3730,7 +3735,7 @@ app.post('/api/owner-documents', requireAuth, requireRole(['owner']), requireKba
 
     const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
 
-    console.log(`📄 Owner document saved: ${name} by ${safeOwnerName}`);
+    console.log(`📄 Signer document saved: ${name} by ${safeOwnerName}`);
 
     if (isInProcess) {
       io.emit('documentNotarized', {
@@ -3757,16 +3762,16 @@ app.post('/api/owner-documents', requireAuth, requireRole(['owner']), requireKba
 
     res.json(document);
   } catch (error) {
-    console.error('Error saving owner document:', error);
-    res.status(500).json({ error: 'Failed to save owner document', details: error.message });
+    console.error('Error saving signer document:', error);
+    res.status(500).json({ error: 'Failed to save signer document', details: error.message });
   }
 });
 
-app.get('/api/owner-documents', requireAuth, (req, res) => {
+app.get('/api/signer-documents', requireAuth, (req, res) => {
   try {
     const { ownerId, sessionId, inProcess, notarized, status } = req.query;
     const currentRole = normalizeRole(req.auth?.role);
-    const forcedOwnerId = currentRole === 'owner' ? req.auth.userId : ownerId;
+    const forcedOwnerId = currentRole === 'signer' ? req.auth.userId : ownerId;
     const viewerNotaryId = currentRole === 'notary' ? String(req.auth?.userId || '') : null;
 
     const inProcessFilter = inProcess === undefined ? null : (inProcess === '1' || inProcess === 'true' ? 1 : 0);
@@ -3804,20 +3809,20 @@ app.get('/api/owner-documents', requireAuth, (req, res) => {
 
     res.json(documents);
   } catch (error) {
-    console.error('Error fetching owner documents:', error);
-    res.status(500).json({ error: 'Failed to fetch owner documents' });
+    console.error('Error fetching signer documents:', error);
+    res.status(500).json({ error: 'Failed to fetch signer documents' });
   }
 });
 
-app.get('/api/owner-documents/:id', requireAuth, (req, res) => {
+app.get('/api/signer-documents/:id', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
     const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!document) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
     const requestRole = normalizeRole(req.auth?.role);
-    if (requestRole === 'owner' && String(document.ownerId || '') !== String(req.auth.userId)) {
+    if (requestRole === 'signer' && String(document.ownerId || '') !== String(req.auth.userId)) {
       return res.status(403).json({ error: 'Forbidden: you can only access your own documents' });
     }
     if (requestRole === 'notary') {
@@ -3830,20 +3835,20 @@ app.get('/api/owner-documents/:id', requireAuth, (req, res) => {
     }
     res.json(document);
   } catch (error) {
-    console.error('Error fetching owner document:', error);
-    res.status(500).json({ error: 'Failed to fetch owner document' });
+    console.error('Error fetching signer document:', error);
+    res.status(500).json({ error: 'Failed to fetch signer document' });
   }
 });
 
-app.get('/api/owner-documents/:id/download', requireAuth, (req, res) => {
+app.get('/api/signer-documents/:id/download', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
     const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!document) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
     const requestRole = normalizeRole(req.auth?.role);
-    if (requestRole === 'owner' && String(document.ownerId || '') !== String(req.auth.userId)) {
+    if (requestRole === 'signer' && String(document.ownerId || '') !== String(req.auth.userId)) {
       return res.status(403).json({ error: 'Forbidden: you can only access your own documents' });
     }
     if (requestRole === 'notary') {
@@ -3876,19 +3881,19 @@ app.get('/api/owner-documents/:id/download', requireAuth, (req, res) => {
 
     return res.status(404).json({ error: 'Original document not available for download' });
   } catch (error) {
-    console.error('Error downloading owner document:', error);
-    res.status(500).json({ error: 'Failed to download owner document' });
+    console.error('Error downloading signer document:', error);
+    res.status(500).json({ error: 'Failed to download signer document' });
   }
 });
 
-app.get('/api/owner-documents/:id/notarized', requireAuth, (req, res) => {
+app.get('/api/signer-documents/:id/notarized', requireAuth, (req, res) => {
   try {
     const { id } = req.params;
     const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!document) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
-    if (normalizeRole(req.auth?.role) === 'owner' && String(document.ownerId || '') !== String(req.auth.userId)) {
+    if (normalizeRole(req.auth?.role) === 'signer' && String(document.ownerId || '') !== String(req.auth.userId)) {
       return res.status(403).json({ error: 'Forbidden: you can only access your own documents' });
     }
 
@@ -3911,13 +3916,13 @@ app.get('/api/owner-documents/:id/notarized', requireAuth, (req, res) => {
   }
 });
 
-app.delete('/api/owner-documents/:id', requireAuth, requireRole(['owner']), requireKbaApproved, (req, res) => {
+app.delete('/api/signer-documents/:id', requireAuth, requireRole(['signer']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
     const existing = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
 
     if (!existing) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
 
     if (String(existing.ownerId || '') !== String(req.auth.userId)) {
@@ -3941,12 +3946,12 @@ app.delete('/api/owner-documents/:id', requireAuth, requireRole(['owner']), requ
 
     res.json({ success: true, id });
   } catch (error) {
-    console.error('Error deleting owner document:', error);
-    res.status(500).json({ error: 'Failed to delete owner document' });
+    console.error('Error deleting signer document:', error);
+    res.status(500).json({ error: 'Failed to delete signer document' });
   }
 });
 
-app.put('/api/owner-documents/:id/session-started', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
+app.put('/api/signer-documents/:id/session-started', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
     const { sessionId, notaryName, notaryUserId } = req.body || {};
@@ -3957,7 +3962,7 @@ app.put('/api/owner-documents/:id/session-started', requireAuth, requireRole(['n
 
     const existing = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!existing) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
     const existingStatus = String(existing.status || '').trim().toLowerCase();
     if (!existing.notaryId) {
@@ -4001,7 +4006,7 @@ app.put('/api/owner-documents/:id/session-started', requireAuth, requireRole(['n
 
     const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!document) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
 
     io.emit('notarySessionStarted', {
@@ -4014,26 +4019,26 @@ app.put('/api/owner-documents/:id/session-started', requireAuth, requireRole(['n
 
     res.json(document);
   } catch (error) {
-    console.error('Error marking owner document session started:', error);
+    console.error('Error marking signer document session started:', error);
     res.status(500).json({ error: 'Failed to mark session started' });
   }
 });
 
-app.put('/api/owner-documents/:id/session-ended', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
+app.put('/api/signer-documents/:id/session-ended', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
     const { sessionId, notaryName, notaryUserId } = req.body || {};
 
     const existing = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!existing) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
 
     const amountDue = Number(existing.sessionAmount || 0);
     const paymentStatus = String(existing.paymentStatus || 'not_required').trim().toLowerCase();
     if (amountDue > 0 && paymentStatus !== 'paid') {
       return res.status(409).json({
-        error: 'Owner payment is pending. End session is blocked until payment is completed.',
+        error: 'Signer payment is pending. End session is blocked until payment is completed.',
         paymentRequired: true,
         paymentStatus,
         amountDue,
@@ -4130,11 +4135,11 @@ app.put('/api/owner-documents/:id/session-ended', requireAuth, requireRole(['not
 
     res.json(document);
   } catch (error) {
-    console.error('Error ending owner document session:', error);
+    console.error('Error ending signer document session:', error);
     res.status(500).json({ error: 'Failed to end session' });
   }
 });
-app.put('/api/owner-documents/:id/review', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
+app.put('/api/signer-documents/:id/review', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
     const { notaryReview, notaryName } = req.body;
@@ -4145,7 +4150,7 @@ app.put('/api/owner-documents/:id/review', requireAuth, requireRole(['notary']),
 
     const existing = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!existing) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
 
     const requesterNotaryId = String(req.auth?.userId || '').trim();
@@ -4154,7 +4159,7 @@ app.put('/api/owner-documents/:id/review', requireAuth, requireRole(['notary']),
     const existingReview = String(existing.notaryReview || '').trim().toLowerCase();
 
     if (existingStatus === 'uploaded') {
-      return res.status(409).json({ error: 'Owner must submit this document for notarization first' });
+      return res.status(409).json({ error: 'Signer must submit this document for notarization first' });
     }
 
     if (existingNotaryId && existingNotaryId !== requesterNotaryId) {
@@ -4213,10 +4218,10 @@ app.put('/api/owner-documents/:id/review', requireAuth, requireRole(['notary']),
 
     const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!document) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
 
-    console.log(`✅ Owner document ${id} reviewed as ${notaryReview} by ${reviewerName}`);
+    console.log(`✅ Signer document ${id} reviewed as ${notaryReview} by ${reviewerName}`);
 
     // Record call initiation when accepted
     if (notaryReview === 'accepted') {
@@ -4263,19 +4268,19 @@ app.put('/api/owner-documents/:id/review', requireAuth, requireRole(['notary']),
 
     res.json(document);
   } catch (error) {
-    console.error('Error updating owner document review:', error);
-    res.status(500).json({ error: 'Failed to update owner document review' });
+    console.error('Error updating signer document review:', error);
+    res.status(500).json({ error: 'Failed to update signer document review' });
   }
 });
 
-app.put('/api/owner-documents/:id/pay', requireAuth, requireRole(['owner']), requireKbaApproved, (req, res) => {
+app.put('/api/signer-documents/:id/pay', requireAuth, requireRole(['signer']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
     const { transactionId, paymentMethod } = req.body || {};
 
     const existing = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!existing) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
     if (String(existing.ownerId || '') !== String(req.auth.userId)) {
       return res.status(403).json({ error: 'Forbidden: you can only pay for your own document sessions' });
@@ -4325,19 +4330,19 @@ app.put('/api/owner-documents/:id/pay', requireAuth, requireRole(['owner']), req
 
     return res.json(updated);
   } catch (error) {
-    console.error('Error processing owner session payment:', error);
+    console.error('Error processing signer session payment:', error);
     return res.status(500).json({ error: 'Failed to process payment' });
   }
 });
 
-app.put('/api/owner-documents/:id/schedule', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
+app.put('/api/signer-documents/:id/schedule', requireAuth, requireRole(['notary']), requireKbaApproved, (req, res) => {
   try {
     const { id } = req.params;
     const { scheduledAt } = req.body || {};
 
     const existing = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!existing) {
-      return res.status(404).json({ error: 'Owner document not found' });
+      return res.status(404).json({ error: 'Signer document not found' });
     }
     if (existing.notaryId && String(existing.notaryId) !== String(req.auth?.userId || '')) {
       return res.status(409).json({ error: 'This document is locked by another notary' });
@@ -4378,7 +4383,7 @@ app.put('/api/owner-documents/:id/schedule', requireAuth, requireRole(['notary']
 
     const updated = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!updated) {
-      return res.status(404).json({ error: 'Owner document not found after update' });
+      return res.status(404).json({ error: 'Signer document not found after update' });
     }
 
     io.emit('documentReviewUpdated', {
@@ -4395,8 +4400,8 @@ app.put('/api/owner-documents/:id/schedule', requireAuth, requireRole(['notary']
 
     res.json(updated);
   } catch (error) {
-    console.error('Error scheduling owner document meeting:', error);
-    res.status(500).json({ error: 'Failed to schedule owner document meeting' });
+    console.error('Error scheduling signer document meeting:', error);
+    res.status(500).json({ error: 'Failed to schedule signer document meeting' });
   }
 });
 
@@ -4584,7 +4589,7 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('usersConnected', session.users);
 
     // Send connection status confirmation specifically for the joining user
-    const hasOwner = session.users.some(u => u.role === 'owner');
+    const hasOwner = session.users.some(u => u.role === 'signer');
     const hasNotary = session.users.some(u => u.role === 'notary');
     socket.emit('sessionStatus', {
       sessionId: roomId,
@@ -4619,7 +4624,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle notary starting a session — broadcast to all connected clients (especially owner)
+  // Handle notary starting a session — broadcast to all connected clients (especially signer)
   socket.on('notarySessionStarted', (data) => {
     console.log('🔔 Notary started session:', data);
 
@@ -4633,7 +4638,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Persist session start state to owner document (so owner dashboard can reflect it on refresh)
+    // Persist session start state to signer document (so signer dashboard can reflect it on refresh)
     try {
       if (data?.documentId) {
         dbRun(
@@ -4666,7 +4671,7 @@ io.on('connection', (socket) => {
 
     persistDatabase();
 
-    // Broadcast with complete context so owner knows to show "Join Session" button
+    // Broadcast with complete context so signer knows to show "Join Session" button
     io.emit('notarySessionStarted', {
       documentId: data.documentId,
       sessionId: data.sessionId,
@@ -4685,7 +4690,7 @@ io.on('connection', (socket) => {
   socket.on('liveMeetingStarted', (data) => {
     const userSession = userSessions.get(socket.id);
     const roomId = normalizeRoomId(data?.sessionId || userSession?.roomId);
-    if (!userSession || !roomId || userSession.roomId !== roomId || (userSession.role !== 'notary' && userSession.role !== 'owner')) {
+    if (!userSession || !roomId || userSession.roomId !== roomId || (userSession.role !== 'notary' && userSession.role !== 'signer')) {
       return;
     }
 
@@ -4865,9 +4870,9 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle owner acknowledging session start
+  // Handle signer acknowledging session start
   socket.on('ownerAckSessionStart', (data) => {
-    console.log('✅ Owner acknowledged session start:', data);
+    console.log('✅ Signer acknowledged session start:', data);
     io.emit('ownerReadyForSession', {
       documentId: data.documentId,
       sessionId: data.sessionId,
@@ -4900,14 +4905,14 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle document scroll synchronization (bidirectional between owner and notary)
+  // Handle document scroll synchronization (bidirectional between signer and notary)
   socket.on('documentScrolled', (data) => {
     const userSession = userSessions.get(socket.id);
     if (!userSession) {
       console.warn(`❌ [SCROLL SYNC] No session for socket ${socket.id}`);
       return;
     }
-    if (userSession.role !== 'notary' && userSession.role !== 'owner') {
+    if (userSession.role !== 'notary' && userSession.role !== 'signer') {
       console.log(`⏭️ [SCROLL SYNC] Ignoring scroll from unsupported role: ${userSession.role}`);
       return;
     }

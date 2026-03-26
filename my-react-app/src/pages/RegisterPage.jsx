@@ -10,7 +10,7 @@ const RegisterPage = () => {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
-  const [role, setRole] = useState('owner')
+  const [role, setRole] = useState('signer')
   const [error, setError] = useState('')
 
   const moveToLogin = () => {
@@ -131,7 +131,7 @@ const RegisterPage = () => {
             value={role}
             onChange={(event) => setRole(event.target.value)}
           >
-            <option value="owner">Doc owner</option>
+            <option value="signer">Doc signer</option>
             <option value="notary">Notary</option>
           </select>
 

@@ -434,7 +434,7 @@ async function saveDocument(documentData) {
 
 async function saveOwnerDocument(documentData) {
   try {
-    const url = '/api/owner-documents';
+    const url = '/api/signer-documents';
     console.log('[saveOwnerDocument] Sending document:', { id: documentData.id, name: documentData.name });
 
     const response = await fetchWithFallback(url, {
@@ -493,13 +493,13 @@ async function fetchOwnerDocuments({ ownerId, sessionId, inProcess, notarized } 
     if (notarized !== undefined) params.append('notarized', notarized ? '1' : '0');
 
     const query = params.toString() ? `?${params.toString()}` : '';
-    const url = `/api/owner-documents${query}`;
+    const url = `/api/signer-documents${query}`;
     console.log('[fetchOwnerDocuments] Fetching from:', url);
 
     const response = await fetchWithFallback(url);
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: Failed to fetch owner documents`);
+      throw new Error(`HTTP ${response.status}: Failed to fetch signer documents`);
     }
 
     const responseData = await response.json();
@@ -541,13 +541,13 @@ async function downloadOwnerDocument(documentId) {
     throw new Error('documentId is required for downloadOwnerDocument');
   }
 
-  const response = await fetchWithFallback(`/api/owner-documents/${documentId}/download`, {
+  const response = await fetchWithFallback(`/api/signer-documents/${documentId}/download`, {
     method: 'GET',
   });
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || `HTTP ${response.status}: Failed to download owner document`);
+    throw new Error(err.error || `HTTP ${response.status}: Failed to download signer document`);
   }
 
   const contentDisposition = response.headers.get('Content-Disposition') || '';
@@ -563,7 +563,7 @@ async function downloadNotarizedOwnerDocument(documentId) {
     throw new Error('documentId is required for downloadNotarizedOwnerDocument');
   }
 
-  const response = await fetchWithFallback(`/api/owner-documents/${documentId}/notarized`, {
+  const response = await fetchWithFallback(`/api/signer-documents/${documentId}/notarized`, {
     method: 'GET',
   });
 
@@ -609,7 +609,7 @@ async function updateDocumentReview(documentId, notaryReview, notaryName) {
 
 async function updateOwnerDocumentReview(documentId, notaryReview, notaryName) {
   try {
-    const url = `/api/owner-documents/${documentId}/review`;
+    const url = `/api/signer-documents/${documentId}/review`;
     console.log('[updateOwnerDocumentReview] Updating:', documentId, 'as', notaryReview);
 
     const response = await fetchWithFallback(url, {
@@ -636,7 +636,7 @@ async function updateOwnerDocumentReview(documentId, notaryReview, notaryName) {
 
 async function deleteOwnerDocument(documentId) {
   try {
-    const url = `/api/owner-documents/${documentId}`;
+    const url = `/api/signer-documents/${documentId}`;
     console.log('[deleteOwnerDocument] Deleting:', documentId);
 
     const response = await fetchWithFallback(url, {
@@ -659,7 +659,7 @@ async function deleteOwnerDocument(documentId) {
 
 async function markOwnerDocumentSessionStarted(documentId, sessionId, notaryName, notaryUserId) {
   try {
-    const url = `/api/owner-documents/${documentId}/session-started`;
+    const url = `/api/signer-documents/${documentId}/session-started`;
     console.log('[markOwnerDocumentSessionStarted] Updating:', documentId, sessionId);
 
     const response = await fetchWithFallback(url, {
@@ -686,7 +686,7 @@ async function markOwnerDocumentSessionStarted(documentId, sessionId, notaryName
 
 async function completeOwnerDocumentNotarization(documentId, notaryName, notarizedDataUrl, sessionAmount) {
   try {
-    const url = `/api/owner-documents/${documentId}/notarize`;
+    const url = `/api/signer-documents/${documentId}/notarize`;
     console.log('[completeOwnerDocumentNotarization] Notarizing:', documentId);
 
     const payload = { notaryName };
@@ -719,7 +719,7 @@ async function completeOwnerDocumentNotarization(documentId, notaryName, notariz
 
 async function payOwnerDocumentSession(documentId, paymentPayload = {}) {
   try {
-    const url = `/api/owner-documents/${documentId}/pay`;
+    const url = `/api/signer-documents/${documentId}/pay`;
     const response = await fetchWithFallback(url, {
       method: 'PUT',
       headers: {
@@ -742,7 +742,7 @@ async function payOwnerDocumentSession(documentId, paymentPayload = {}) {
 
 async function notarizeOwnerDocument(documentId) {
   try {
-    const url = `/api/owner-documents/${documentId}/owner-notarize`;
+    const url = `/api/signer-documents/${documentId}/signer-notarize`;
     console.log('[notarizeOwnerDocument] Notarizing:', documentId);
 
     const response = await fetchWithFallback(url, {
@@ -769,7 +769,7 @@ async function notarizeOwnerDocument(documentId) {
 
 async function endOwnerDocumentSession(documentId, sessionId, notaryName, notaryUserId) {
   try {
-    const url = `/api/owner-documents/${documentId}/session-ended`;
+    const url = `/api/signer-documents/${documentId}/session-ended`;
     console.log('[endOwnerDocumentSession] Ending:', documentId, sessionId);
 
     const response = await fetchWithFallback(url, {
@@ -922,7 +922,7 @@ async function debugFetchKbaSubmissions() {
 }
 
 async function scheduleOwnerDocumentMeeting(documentId, scheduledAt) {
-  const response = await fetchWithFallback(`/api/owner-documents/${documentId}/schedule`, {
+  const response = await fetchWithFallback(`/api/signer-documents/${documentId}/schedule`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ scheduledAt }),

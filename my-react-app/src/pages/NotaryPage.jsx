@@ -144,27 +144,27 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       })();
 
       const onElementAdded = (element) => {
-        console.log("✏️ [NOTARY] Owner added element:", element);
+        console.log("✏️ [NOTARY] Signer added element:", element);
         setElements((prev) => [...prev, element]);
       };
 
       const onElementUpdated = (updatedElement) => {
-        console.log("🔄 [NOTARY] Owner updated element:", updatedElement.id);
+        console.log("🔄 [NOTARY] Signer updated element:", updatedElement.id);
         setElements((prev) =>
           prev.map((el) => (el.id === updatedElement.id ? updatedElement : el))
         );
       };
 
       const onElementRemoved = (elementId) => {
-        console.log("🗑️ [NOTARY] Owner removed element:", elementId);
+        console.log("🗑️ [NOTARY] Signer removed element:", elementId);
         setElements((prev) => prev.filter((el) => el.id !== elementId));
       };
 
       const onUsersConnected = (users) => {
         console.log("👥 [NOTARY] Users connected:", users);
         setConnectedUsers(users);
-        const owner = users.find((u) => u.role === 'owner');
-        setOwnerConnected(!!owner);
+        const signer = users.find((u) => u.role === 'signer');
+        setOwnerConnected(!!signer);
       };
 
       const onSessionStatus = (status) => {
@@ -182,13 +182,13 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       };
 
       const onDocumentShared = (data) => {
-        console.log("📄 [NOTARY] Document shared by owner:", data.fileName);
+        console.log("📄 [NOTARY] Document shared by signer:", data.fileName);
         setPdfDataUrl(data.pdfDataUrl);
         setDocumentInfo({ fileName: data.fileName });
       };
 
       const onDocumentScrolled = (data) => {
-        if (data?.fromRole && data.fromRole !== "owner") return;
+        if (data?.fromRole && data.fromRole !== "signer") return;
         if (data?.scrollRatio === undefined && data?.scrollPosition === undefined) return;
 
         const editorTarget = editorScrollRef.current;
@@ -217,7 +217,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
       };
 
       const onOwnerLeftSession = (data) => {
-        console.log("👤 [NOTARY] Owner left session:", data.sessionId);
+        console.log("👤 [NOTARY] Signer left session:", data.sessionId);
         if (data.sessionId === sessionId) {
           setSessionJoined(false);
           setSessionId(null);
@@ -465,7 +465,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     };
   }, [sessionJoined, sessionId, documentId, documentInfo?.fileName]);
 
-  // Scroll synchronization: emit notary's scroll position to owner.
+  // Scroll synchronization: emit notary's scroll position to signer.
   // Listen to outer editor container which receives all scroll events.
   useEffect(() => {
     if (!sessionJoined || !sessionId) return;
@@ -627,7 +627,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
 
   const handleMarkNotarized = async () => {
     if (paymentState === 'pending') {
-      showToast('Owner payment is already pending for this session.', 'info');
+      showToast('Signer payment is already pending for this session.', 'info');
       return;
     }
 
@@ -664,7 +664,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     let notarizedDataUrl = null;
     let pdfSourceForNotarization = pdfDataUrl;
 
-    // Fallback: if session does not currently hold shared PDF payload, pull it from owner document record.
+    // Fallback: if session does not currently hold shared PDF payload, pull it from signer document record.
     if (!pdfSourceForNotarization && sessionId) {
       try {
         const docs = await fetchOwnerDocuments({ sessionId });
@@ -713,7 +713,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         setPaymentState('pending');
         setPaymentAmount(normalizedAmount);
         setPaymentMethodUsed('');
-        showToast(`✅ Document marked. Waiting for owner payment of ${normalizedAmount.toFixed(2)}.`, 'info', 4200);
+        showToast(`✅ Document marked. Waiting for signer payment of ${normalizedAmount.toFixed(2)}.`, 'info', 4200);
       } else {
         setPaymentState('paid');
         setPaymentAmount(0);
@@ -855,7 +855,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
           }}>
             {isConnected ? "● Server connected" : "● Server offline — start the backend first"}
           </div>
-          <p style={{ color: "#666" }}>Paste the session ID or open the link shared by the document owner.</p>
+          <p style={{ color: "#666" }}>Paste the session ID or open the link shared by the document signer.</p>
 
           <input
             type="text"
@@ -948,12 +948,12 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
                 }}
                 title={
                   paymentState === 'pending'
-                    ? 'Waiting for owner payment'
+                    ? 'Waiting for signer payment'
                     : paymentState === 'paid'
                     ? 'Payment received for this document'
                     : ownerConnected
                     ? 'Mark document as notarized'
-                    : 'Connect to owner to complete notarization'
+                    : 'Connect to signer to complete notarization'
                 }
               >
                 {markNotarizedLabel}
@@ -982,7 +982,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
           <p style={{ margin: "4px 0" }}>
             <strong>Connected Users:</strong> {connectedUsers.length}
             {" | "}
-            <strong>Owner Status:</strong>
+            <strong>Signer Status:</strong>
             <span style={{
               display: "inline-flex", alignItems: "center", gap: "4px",
               marginLeft: "6px",
@@ -1118,7 +1118,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
                 borderRadius: "5px",
               }}
             >
-              Waiting for the document owner to upload a document...
+              Waiting for the document signer to upload a document...
             </div>
           )}
         </div>

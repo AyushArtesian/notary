@@ -145,7 +145,7 @@ export const createDocumentDragAsset = async ({
   fileName = "document",
   dataUrl,
   mimeType = "",
-  userRole = "owner",
+  userRole = "signer",
 } = {}) => {
   if (!dataUrl) {
     return null;

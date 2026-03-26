@@ -211,7 +211,7 @@ const NotaryMeetingsPage = () => {
       );
     }
 
-    // Owner requested notarization: let notary accept/reject.
+    // Signer requested notarization: let notary accept/reject.
     if (status === 'pending_review') {
       return (
         <div className="inline-actions-table">
@@ -253,7 +253,7 @@ const NotaryMeetingsPage = () => {
 
     // All other statuses: no action buttons.
     if (status === 'uploaded') {
-      return <span className="muted">Waiting for owner request</span>;
+      return <span className="muted">Waiting for signer request</span>;
     }
 
     if (status === 'rejected') {
@@ -274,7 +274,7 @@ const NotaryMeetingsPage = () => {
           <thead>
             <tr>
               <th>Document</th>
-              <th>Owner</th>
+              <th>Signer</th>
               <th>Session ID</th>
               <th>Scheduled Time</th>
               <th>Start Time</th>
@@ -504,7 +504,7 @@ const SessionDetailsModal = ({
                   <p>{session?.notaryName || 'Notary'}</p>
                 </div>
                 <div>
-                  <p className="label">Owner</p>
+                  <p className="label">Signer</p>
                   <p>{session?.ownerName || session?.ownerId || '-'}</p>
                 </div>
                 <div>

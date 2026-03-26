@@ -24,7 +24,7 @@ const OwnerHomeDashboardPage = () => {
         setDocuments(Array.isArray(response) ? response : []);
       } catch (err) {
         if (!active) return;
-        setError(err?.message || 'Failed to load owner dashboard data');
+        setError(err?.message || 'Failed to load signer dashboard data');
       } finally {
         if (active) setLoading(false);
       }
@@ -60,7 +60,7 @@ const OwnerHomeDashboardPage = () => {
 
   return (
     <NotaryWorkspaceShell
-      sidebarRole="owner"
+      sidebarRole="signer"
       title="Home"
       subtitle="Overview of your document activity, payments, and scheduled meetings"
     >

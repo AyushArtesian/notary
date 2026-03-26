@@ -7,7 +7,7 @@ const OwnerDocDashboardWrapper = () => {
 
   return (
     <NotaryWorkspaceShell
-      sidebarRole="owner"
+      sidebarRole="signer"
       title="My Documents"
       subtitle="Manage and track all your notarization documents"
       hideSidebar={hideSidebar}

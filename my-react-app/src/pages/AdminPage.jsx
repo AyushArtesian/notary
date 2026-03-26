@@ -24,7 +24,7 @@ const AdminPage = () => {
   const [kbaDocumentLoading, setKbaDocumentLoading] = useState(false);
   const [kbaDocumentError, setKbaDocumentError] = useState("");
   const [kbaRejectReason, setKbaRejectReason] = useState("");
-  const [editUserForm, setEditUserForm] = useState({ username: "", email: "", role: "owner", password: "" });
+  const [editUserForm, setEditUserForm] = useState({ username: "", email: "", role: "signer", password: "" });
 
   const authUser = (() => {
     try {
@@ -49,7 +49,7 @@ const AdminPage = () => {
 
   const statusClassByRole = (role) => {
     const normalized = String(role || "").trim().toLowerCase();
-    if (normalized === "owner") return "role-owner";
+    if (normalized === "signer") return "role-signer";
     if (normalized === "notary") return "role-notary";
     if (normalized === "admin") return "role-admin";
     return "";
@@ -173,7 +173,7 @@ const AdminPage = () => {
       setEditUserForm({
         username: payload?.user?.username || "",
         email: payload?.user?.email || "",
-        role: payload?.user?.role || "owner",
+        role: payload?.user?.role || "signer",
         password: "",
       });
     } catch (err) {
@@ -330,7 +330,7 @@ const AdminPage = () => {
     <div className="admin-page">
       <div className="admin-container">
         <h1 className="admin-title">Admin Dashboard</h1>
-        <p className="admin-subtitle">Monitor owners, notaries, activity status, and notarization work in one place.</p>
+        <p className="admin-subtitle">Monitor signers, notaries, activity status, and notarization work in one place.</p>
 
         {error && <p className="admin-error">{error}</p>}
         {actionError && <p className="admin-error">{actionError}</p>}
@@ -348,8 +348,8 @@ const AdminPage = () => {
                 <strong>{summary.totalUsers}</strong>
               </div>
               <div className="admin-stat-card">
-                <span className="admin-stat-label">Owners</span>
-                <strong>{summary.owners}</strong>
+                <span className="admin-stat-label">Signers</span>
+                <strong>{summary.signers}</strong>
               </div>
               <div className="admin-stat-card">
                 <span className="admin-stat-label">Notaries</span>
@@ -386,7 +386,7 @@ const AdminPage = () => {
               />
               <select className="admin-filter-select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
                 <option value="all">All roles</option>
-                <option value="owner">Owners</option>
+                <option value="signer">Signers</option>
                 <option value="notary">Notaries</option>
                 <option value="admin">Admins</option>
               </select>
@@ -435,7 +435,7 @@ const AdminPage = () => {
                         )}
                       </td>
                       <td>
-                        {String(user.role).toLowerCase() === "owner" ? (
+                        {String(user.role).toLowerCase() === "signer" ? (
                           <div className="admin-work-metrics">
                             <div>Owned: {user.work?.ownedDocuments || 0}</div>
                             <div>Notarized: {user.work?.ownedNotarizedDocuments || 0}</div>
@@ -589,7 +589,7 @@ const AdminPage = () => {
                 <thead>
                   <tr>
                     <th>Document</th>
-                    <th>Owner</th>
+                    <th>Signer</th>
                     <th>Notary</th>
                     <th>Status</th>
                     <th>Session</th>
@@ -644,7 +644,7 @@ const AdminPage = () => {
                           value={editUserForm.role}
                           onChange={(e) => setEditUserForm((prev) => ({ ...prev, role: e.target.value }))}
                         >
-                          <option value="owner">Owner</option>
+                          <option value="signer">Signer</option>
                           <option value="notary">Notary</option>
                           <option value="admin">Admin</option>
                         </select>

@@ -124,14 +124,14 @@ const OwnerMeetingsPage = () => {
                         if (type === 'past') {
                           handleOpenPastSessionDetails(row);
                         } else {
-                          navigate(`/owner?sessionId=${encodeURIComponent(row.sessionId)}&role=owner`);
+                          navigate(`/signer?sessionId=${encodeURIComponent(row.sessionId)}&role=signer`);
                         }
                       }}
                     >
                       {type === 'past' ? 'View' : 'Open Session'}
                     </button>
                   ) : (
-                    <button className="notary-btn secondary" onClick={() => navigate('/owner/doc/dashboard')}>
+                    <button className="notary-btn secondary" onClick={() => navigate('/signer/doc/dashboard')}>
                       View Docs
                     </button>
                   )}
@@ -146,7 +146,7 @@ const OwnerMeetingsPage = () => {
 
   return (
     <NotaryWorkspaceShell
-      sidebarRole="owner"
+      sidebarRole="signer"
       title="Meetings"
       subtitle="Track your current, upcoming, and past notarization sessions"
     >
@@ -298,7 +298,7 @@ const SessionDetailsModal = ({
                   <p>{session?.notaryName || 'Notary'}</p>
                 </div>
                 <div>
-                  <p className="label">Owner</p>
+                  <p className="label">Signer</p>
                   <p>{session?.ownerName || session?.ownerId || '-'}</p>
                 </div>
                 <div>

@@ -10,11 +10,11 @@ const MENU_BY_ROLE = {
     { id: 'meetings', label: 'Meetings', path: '/notary/meetings' },
     { id: 'settings', label: 'Settings', path: '/notary/settings' },
   ],
-  owner: [
-    { id: 'home', label: 'Home', path: '/owner/dashboard' },
-    { id: 'transactions', label: 'Transactions', path: '/owner/transactions' },
-    { id: 'meetings', label: 'Meetings', path: '/owner/meetings' },
-    { id: 'upload', label: 'Upload document', path: '/owner/doc/dashboard' },
+  signer: [
+    { id: 'home', label: 'Home', path: '/signer/dashboard' },
+    { id: 'transactions', label: 'Transactions', path: '/signer/transactions' },
+    { id: 'meetings', label: 'Meetings', path: '/signer/meetings' },
+    { id: 'upload', label: 'Upload document', path: '/signer/doc/dashboard' },
   ],
 };
 
@@ -30,12 +30,12 @@ const NotarySidebar = ({ role = 'notary', menuItems }) => {
     }
   })();
 
-  const ownerSessionActive = localStorage.getItem('owner.sessionActive') === 'true';
+  const ownerSessionActive = localStorage.getItem('signer.sessionActive') === 'true';
   if (ownerSessionActive) {
     return null;
   }
 
-  const resolvedRole = role === 'owner' ? 'owner' : 'notary';
+  const resolvedRole = role === 'signer' ? 'signer' : 'notary';
   const resolvedMenuItems = Array.isArray(menuItems) && menuItems.length > 0
     ? menuItems
     : MENU_BY_ROLE[resolvedRole];

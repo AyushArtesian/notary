@@ -1,6 +1,6 @@
 # ?? Artesian Notary Platform
 
-A complete end-to-end digital notarization solution built for owner, notary, and admin workflows.
+A complete end-to-end digital notarization solution built for signer, notary, and admin workflows.
 
 ---
 
@@ -25,7 +25,7 @@ A complete end-to-end digital notarization solution built for owner, notary, and
 
 ## Overview
 
-Artesian Notary is a full-stack digital notarization platform with real-time collaboration, KBA verification, and complete owner/notary/admin lifecycle across documents.
+Artesian Notary is a full-stack digital notarization platform with real-time collaboration, KBA verification, and complete signer/notary/admin lifecycle across documents.
 
 ---
 
@@ -33,25 +33,25 @@ Artesian Notary is a full-stack digital notarization platform with real-time col
 
 ### Authentication & Access
 - JWT-based login and session auth
-- Role-based authorization (owner/notary/admin)
-- KBA-required flows for owner/notary actions
+- Role-based authorization (signer/notary/admin)
+- KBA-required flows for signer/notary actions
 - OAuth-like session token renewal and localStorage persistence
 
 ### Management and User Roles
 - Admin dashboard for user and KBA queue
 - Notary dashboard for sessions and uploads
-- Owner dashboard for document state tracking and session joining
+- Signer dashboard for document state tracking and session joining
 - Clean sign-out and token clearing
 
 ### Document Lifecycle
 - Upload document (pdf/doc/docx/jpg/png)
 - Document statuses: `uploaded`, `pending_review`, `accepted`, `session_started`, `payment_pending`, `notarized`, `rejected`
 - Notarization process triggers status transitions and notifications.
-- Owner -> notary assignment and review control
+- Signer -> notary assignment and review control
 
 ### Real-Time Collaboration
 - Socket.io sessions (room ID: `notary-session-...`)
-- Join/reconnect logic across owner and notary
+- Join/reconnect logic across signer and notary
 - `usersConnected`, `sessionStatus`, `documentShared`, `documentScrolled`
 - Element sync (`elementAdded`, `elementUpdated`, `elementRemoved`)
 - Scroll sync resilient to nested container selection and avoid feedback loops
@@ -63,15 +63,15 @@ Artesian Notary is a full-stack digital notarization platform with real-time col
 - Automatic asset save/load per session
 
 ### Payments and Notarization
-- Notary can request payment from owner
-- Owner can pay right in workflow
+- Notary can request payment from signer
+- Signer can pay right in workflow
 - Payment state transitions `pending`, `paid`
 - Notary can mark document as notarized
 
 ### File/Download
 - Secure PDF download endpoints:
-  - `GET /api/owner-documents/:id/download` (raw/original)
-  - `GET /api/owner-documents/:id/notarized` (notarized)
+  - `GET /api/signer-documents/:id/download` (raw/original)
+  - `GET /api/signer-documents/:id/notarized` (notarized)
 - Client helpers for authenticated `fetch` blob download
 - Fallback for `dataUrl` (in-app PDF data stored in DB)
 
@@ -168,13 +168,13 @@ Open http://localhost:5173
 
 ## Usage Workflow
 
-1. Register/login owner or notary.
-2. Owner uploads doc.
+1. Register/login signer or notary.
+2. Signer uploads doc.
 3. Notary reviews and changes status.
 4. Notary starts notary session (sessionId is generated).
-5. Owner sees `Join Session`, clicks.
+5. Signer sees `Join Session`, clicks.
 6. Both join live room, sync drawings + scroll, exchange assets.
-7. Notary may ask for payment and owner pays.
+7. Notary may ask for payment and signer pays.
 8. Notary marks notarized, produce notarized PDF.
 9. Both can download docs via secure endpoint.
 
@@ -191,14 +191,14 @@ Main endpoints demonstrated in code; see source for complete list.
 - `POST /api/kba/upload`
 - `GET /api/kba/status`
 - `GET /api/admin/kba/pending`
-- `POST /api/owner-documents`
-- `GET /api/owner-documents` (with filters)
-- `GET /api/owner-documents/:id`
-- `GET /api/owner-documents/:id/download`
-- `GET /api/owner-documents/:id/notarized`
-- `PUT /api/owner-documents/:id/review`
-- `PUT /api/owner-documents/:id/pay`
-- `PUT /api/owner-documents/:id/notarize`
+- `POST /api/signer-documents`
+- `GET /api/signer-documents` (with filters)
+- `GET /api/signer-documents/:id`
+- `GET /api/signer-documents/:id/download`
+- `GET /api/signer-documents/:id/notarized`
+- `PUT /api/signer-documents/:id/review`
+- `PUT /api/signer-documents/:id/pay`
+- `PUT /api/signer-documents/:id/notarize`
 - `GET /api/admin/sessions` etc.
 
 ---

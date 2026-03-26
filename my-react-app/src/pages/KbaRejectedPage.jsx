@@ -30,7 +30,7 @@ const setAuthKbaFields = (user = {}) => {
 }
 
 const getDefaultRouteByRole = (role) => {
-  if (role === 'owner') return '/owner/dashboard'
+  if (role === 'signer') return '/signer/dashboard'
   if (role === 'notary') return '/notary/doc/dashboard'
   return '/'
 }

@@ -516,7 +516,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
           saveDocs(backendDocs);
         }
       } catch (err) {
-        console.warn('[OWNER] Failed to load documents from backend:', err?.message || err);
+        console.warn('[SIGNER] Failed to load documents from backend:', err?.message || err);
       }
     };
 
@@ -561,16 +561,16 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlSessionId = params.get("sessionId");
-    let id = urlSessionId || localStorage.getItem("notary.ownerSessionId") || "";
+    let id = urlSessionId || localStorage.getItem("notary.signerSessionId") || "";
     
     // If no sessionId exists, generate one and navigate
     if (!id) {
       id = `notary-session-${Date.now()}`;
-      navigate(`/owner/doc/dashboard?sessionId=${encodeURIComponent(id)}`, { replace: true });
+      navigate(`/signer/doc/dashboard?sessionId=${encodeURIComponent(id)}`, { replace: true });
     }
     
     setSessionId(id);
-    localStorage.setItem("notary.ownerSessionId", id);
+    localStorage.setItem("notary.signerSessionId", id);
   }, [navigate]);
 
   // Sync sidebar visibility with session state (on mount and refresh)
@@ -668,7 +668,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
 
   useEffect(() => {
     const onNotarySessionStarted = (data) => {
-      console.log('✅ [OWNER] Received notarySessionStarted event:', data);
+      console.log('✅ [SIGNER] Received notarySessionStarted event:', data);
       if (!data?.documentId || !data?.sessionId) {
         console.warn('⚠️ Invalid notarySessionStarted data:', data);
         return;
@@ -680,7 +680,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
           ...prev,
           [data.documentId]: data.sessionId,
         };
-        console.log('✅ [OWNER] Updated activeSessions from notarySessionStarted:', updated);
+        console.log('✅ [SIGNER] Updated activeSessions from notarySessionStarted:', updated);
         return updated;
       });
 
@@ -697,11 +697,11 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
             : doc
         );
         saveDocs(nextDocs);
-        console.log('✅ [OWNER] Updated docs with notary session start:', nextDocs.find(d => d.id === data.documentId));
+        console.log('✅ [SIGNER] Updated docs with notary session start:', nextDocs.find(d => d.id === data.documentId));
         return nextDocs;
       });
       
-      // Emit acknowledgment back so notary knows owner is aware
+      // Emit acknowledgment back so notary knows signer is aware
       socket.emit('ownerAckSessionStart', { 
         documentId: data.documentId,
         sessionId: data.sessionId,
@@ -710,7 +710,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     };
 
     const onNotarySessionEnded = (data) => {
-      console.log('❌ [OWNER] Received notarySessionEnded event:', data);
+      console.log('❌ [SIGNER] Received notarySessionEnded event:', data);
 
       const endedSessionId = data?.sessionId;
       const endedDocumentId = data?.documentId;
@@ -748,7 +748,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
         setUploadedAsset(null);
         lastAutoSharedDocKeyRef.current = "";
         localStorage.removeItem(DASHBOARD_STATE_KEY);
-        navigate("/owner/doc/dashboard", { replace: true });
+        navigate("/signer/doc/dashboard", { replace: true });
       }
 
       setActiveSessions((prev) => {
@@ -758,13 +758,13 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
             delete updated[docId];
           }
         });
-        console.log('✅ [OWNER] Updated activeSessions after session end:', updated);
+        console.log('✅ [SIGNER] Updated activeSessions after session end:', updated);
         return updated;
       });
     };
 
     const onOwnerLeftSession = (data) => {
-      console.log('ℹ️ Owner left session:', data.sessionId);
+      console.log('ℹ️ Signer left session:', data.sessionId);
       setActiveSessions((prev) => {
         const updated = { ...prev };
         Object.keys(updated).forEach((docId) => {
@@ -830,7 +830,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
         setUploadedAsset(null);
         lastAutoSharedDocKeyRef.current = '';
         localStorage.removeItem(DASHBOARD_STATE_KEY);
-        navigate('/owner/doc/dashboard', { replace: true });
+        navigate('/signer/doc/dashboard', { replace: true });
       }
     };
 
@@ -887,7 +887,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
               nextPaymentPaidAt !== doc.paymentPaidAt
             ) {
               changed = true;
-              console.log(`✅ [OWNER] Polling: Updated doc ${doc.id} status to ${nextStatus}`);
+              console.log(`✅ [SIGNER] Polling: Updated doc ${doc.id} status to ${nextStatus}`);
               return {
                 ...doc,
                 status: nextStatus,
@@ -912,7 +912,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
           return nextDocs;
         });
       } catch (error) {
-        console.warn("[owner-dashboard] Failed to sync review status:", error?.message || error);
+        console.warn("[signer-dashboard] Failed to sync review status:", error?.message || error);
       }
     };
 
@@ -925,16 +925,16 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     };
   }, []);
 
-  // Keep owner dashboard in sync with notary accept/reject decisions.
+  // Keep signer dashboard in sync with notary accept/reject decisions.
   useEffect(() => {
     const onDocumentReviewUpdated = (data) => {
       const { documentId, notaryReview, notaryName, notaryReviewedAt, status, scheduledAt } = data || {};
       if (!documentId || !notaryReview) {
-        console.warn('⚠️ [OWNER] Invalid documentReviewUpdated data:', data);
+        console.warn('⚠️ [SIGNER] Invalid documentReviewUpdated data:', data);
         return;
       }
 
-      console.log(`✅ [OWNER] Received documentReviewUpdated: ${documentId} → ${notaryReview} (status: ${status})`);
+      console.log(`✅ [SIGNER] Received documentReviewUpdated: ${documentId} → ${notaryReview} (status: ${status})`);
 
       setDocs((prevDocs) => {
         const nextDocs = prevDocs.map((doc) =>
@@ -943,12 +943,12 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
             : doc
         );
         saveDocs(nextDocs);
-        console.log(`✅ [OWNER] Updated doc ${documentId}:`, nextDocs.find(d => d.id === documentId));
+        console.log(`✅ [SIGNER] Updated doc ${documentId}:`, nextDocs.find(d => d.id === documentId));
         return nextDocs;
       });
 
       if (notaryReview !== "accepted") {
-        console.log(`ℹ️ [OWNER] Document rejected/pending, clearing active session for ${documentId}`);
+        console.log(`ℹ️ [SIGNER] Document rejected/pending, clearing active session for ${documentId}`);
         setActiveSessions((prev) => {
           const updated = { ...prev };
           delete updated[documentId];
@@ -967,7 +967,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     const onDocumentNotarized = (data) => {
       const { documentId, status, sessionAmount, paymentStatus, paymentRequestedAt, paymentPaidAt } = data || {};
       if (!documentId) return;
-      console.log(`✅ [OWNER] Received documentNotarized: ${documentId} (status: ${status})`);
+      console.log(`✅ [SIGNER] Received documentNotarized: ${documentId} (status: ${status})`);
       setDocs((prevDocs) => {
         const nextDocs = prevDocs.map((doc) =>
           doc.id === documentId
@@ -996,18 +996,18 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
   }, [activeSessionDocId]);
 
   useEffect(() => {
-    console.log('🔌 [OWNER] Socket connection status:', {
+    console.log('🔌 [SIGNER] Socket connection status:', {
       connected: socket.connected,
       id: socket.id,
       listeners: socket.listeners('notarySessionStarted')?.length || 0
     });
     
     const onConnect = () => {
-      console.log('✅ [OWNER] Socket CONNECTED');
+      console.log('✅ [SIGNER] Socket CONNECTED');
       setIsConnected(true);
     };
     const onDisconnect = () => {
-      console.log('❌ [OWNER] Socket DISCONNECTED');
+      console.log('❌ [SIGNER] Socket DISCONNECTED');
       setIsConnected(false);
     };
     socket.on("connect", onConnect);
@@ -1051,7 +1051,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     const sessionIdToJoin =
       resolveDocSessionId(activeDoc, activeSessions, previousSessions) ||
       normalizeSessionId(sessionIdFromUrl) ||
-      normalizeSessionId(localStorage.getItem("notary.ownerSessionId"));
+      normalizeSessionId(localStorage.getItem("notary.signerSessionId"));
     if (!sessionIdToJoin) return;
 
     setActiveSessions((prev) => {
@@ -1144,9 +1144,9 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     const emitJoinSession = () => {
       socket.emit("joinSession", {
         roomId: sessionIdToJoin,
-        role: "owner",
+        role: "signer",
         userId: authUser?.userId || socket.id,
-        username: authUser?.username || "Owner",
+        username: authUser?.username || "Signer",
         token: authUser?.token,
       });
     };
@@ -1166,7 +1166,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     };
   }, [activeSessionDocId, activeSessions, previousSessions, docs]);
 
-  // Emit owner scroll updates so notary view stays synchronized bidirectionally.
+  // Emit signer scroll updates so notary view stays synchronized bidirectionally.
   useEffect(() => {
     if (!activeSessionDocId || !sessionJoined) return;
 
@@ -1238,9 +1238,9 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     if (sessionIdVal) {
       // Keep URL/session state aligned with the exact session being resumed.
       setSessionId(sessionIdVal);
-      localStorage.setItem("notary.ownerSessionId", sessionIdVal);
+      localStorage.setItem("notary.signerSessionId", sessionIdVal);
       localStorage.setItem("notary.lastSessionId", sessionIdVal);
-      navigate(`/owner/doc/dashboard?sessionId=${encodeURIComponent(sessionIdVal)}`, { replace: true });
+      navigate(`/signer/doc/dashboard?sessionId=${encodeURIComponent(sessionIdVal)}`, { replace: true });
 
       setActiveSessions((prev) => ({ ...prev, [doc.id]: sessionIdVal }));
       setActiveSessionDocId(doc.id);
@@ -1275,9 +1275,9 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       const sessionIdVal = resolveDocSessionId(activeDoc, activeSessions, previousSessions);
       if (sessionIdVal) {
         setSessionId(sessionIdVal);
-        localStorage.setItem("notary.ownerSessionId", sessionIdVal);
+        localStorage.setItem("notary.signerSessionId", sessionIdVal);
         localStorage.setItem("notary.lastSessionId", sessionIdVal);
-        navigate(`/owner/doc/dashboard?sessionId=${encodeURIComponent(sessionIdVal)}`, { replace: true });
+        navigate(`/signer/doc/dashboard?sessionId=${encodeURIComponent(sessionIdVal)}`, { replace: true });
         socket.emit("documentShared", { pdfDataUrl: doc.dataUrl, fileName: doc.name || "document.pdf" });
       }
     }
@@ -1294,7 +1294,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
         fileName: file.name,
         dataUrl: reader.result,
         mimeType: file.type,
-        userRole: "owner",
+        userRole: "signer",
       });
 
       setUploadedAssets((prev) => [...prev, asset]);
@@ -1330,7 +1330,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
   };
 
   const handleExitSession = () => {
-    // Notify notary that owner is leaving the session using the stored ref
+    // Notify notary that signer is leaving the session using the stored ref
     const sessionIdToLeave = currentSessionIdRef.current;
     if (sessionIdToLeave) {
       socket.emit("ownerLeftSession", { sessionId: sessionIdToLeave });
@@ -1347,7 +1347,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     setUploadedAsset(null);
     lastAutoSharedDocKeyRef.current = "";
     localStorage.removeItem(DASHBOARD_STATE_KEY);
-    localStorage.setItem('owner.sessionActive', 'false');
+    localStorage.setItem('signer.sessionActive', 'false');
     // Also clear the active session for this document when exiting
     setActiveSessions((prev) => {
       const updated = { ...prev };
@@ -1356,7 +1356,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     });
 
     if (setHideSidebar) setHideSidebar(false);
-    navigate("/owner/dashboard");
+    navigate("/signer/dashboard");
   };
 
   const restoreUploadedAssets = () => {
@@ -1454,7 +1454,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       setDocs(latestDocs);
       saveDocs(latestDocs);
     } catch (error) {
-      console.error("Failed to delete owner document:", error);
+      console.error("Failed to delete signer document:", error);
       setDocs(previous);
       saveDocs(previous);
       alert(error?.message || "Failed to delete document. Please try again.");
@@ -1466,16 +1466,16 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     if (!file) return;
 
     if (!authUser?.userId) {
-      alert('Please login again. Unable to save document without owner ID.');
+      alert('Please login again. Unable to save document without signer ID.');
       e.target.value = "";
       return;
     }
 
     const ownerName = (() => {
       try {
-        return JSON.parse(localStorage.getItem("notary.authUser") || "null")?.username || "Owner";
+        return JSON.parse(localStorage.getItem("notary.authUser") || "null")?.username || "Signer";
       } catch {
-        return "Owner";
+        return "Signer";
       }
     })();
 
@@ -1521,9 +1521,9 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
           saveDocs(backendDocs);
         }
 
-        console.log('✅ [OWNER] Uploaded document saved and synced from backend:', newDoc.name);
+        console.log('✅ [SIGNER] Uploaded document saved and synced from backend:', newDoc.name);
       } catch (error) {
-        console.warn('⚠️ [OWNER] Failed to save uploaded document to backend:', error);
+        console.warn('⚠️ [SIGNER] Failed to save uploaded document to backend:', error);
         setDocs(previousDocs);
         saveDocs(previousDocs);
         alert('Upload failed to save in database. Please try again.');
@@ -1535,7 +1535,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
 
   const handleView = (doc) => {
     // Navigate to the document detail view which shows the document, notarization status, session info, and notary details.
-    navigate(`/owner/doc/view/${encodeURIComponent(doc.id)}`);
+    navigate(`/signer/doc/view/${encodeURIComponent(doc.id)}`);
   };
 
   const handleNotarize = (doc) => {
@@ -1584,7 +1584,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
 
     const signatureId = typeof window !== "undefined" && window.crypto?.randomUUID
       ? window.crypto.randomUUID()
-      : `signature-owner-${Date.now()}`;
+      : `signature-signer-${Date.now()}`;
 
     const effectiveSessionId =
       sessionId ||
@@ -1597,7 +1597,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       username: authUser?.username || null,
       name: `Extracted Signature (${new Date().toLocaleDateString()})`,
       image: imageDataUrl,
-      userRole: "owner",
+      userRole: "signer",
     });
 
     setSignatureExtractionPdfDataUrl("");
@@ -1668,7 +1668,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
         return;
       }
 
-      console.log('📋 [OWNER] Sending document for notary review:', notarizingDoc.id);
+      console.log('📋 [SIGNER] Sending document for notary review:', notarizingDoc.id);
 
       const result = await notarizeOwnerDocument(notarizingDoc.id);
 
@@ -1688,7 +1688,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
 
       setNotarizingDoc(null);
     } catch (error) {
-      console.error('❌ [OWNER] Notarization failed:', error);
+      console.error('❌ [SIGNER] Notarization failed:', error);
       alert(`Failed to notarize document: ${error.message}`);
       setNotarizingDoc(null);
     }
@@ -1705,14 +1705,14 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       {/* If session joined, show editor view */}
       {activeSessionDocId && sessionJoined ? (
         <div style={{ display: "flex", height: "100vh" }}>
-          {/* Asset Sidebar (owner session) */}
+          {/* Asset Sidebar (signer session) */}
           <SidebarAssets
-            userRole="owner"
+            userRole="signer"
             sessionId={resolveDocSessionId(docs.find((d) => d.id === activeSessionDocId), activeSessions, previousSessions)}
             userId={authUser.userId}
             uploadedAsset={uploadedAsset}
             uploadedAssets={uploadedAssets}
-            assetScopeKey={activeSessionDocId || "owner-no-doc"}
+            assetScopeKey={activeSessionDocId || "signer-no-doc"}
             sourcePdfDataUrl={typeof uploadedFile === "string" ? uploadedFile : ""}
             allowSignatureExtraction
           />
@@ -1739,7 +1739,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
                   >
                     ←
                   </button>
-                  <h2 style={{ margin: 0, display: "inline" }}>✍️ Owner Dashboard</h2>
+                  <h2 style={{ margin: 0, display: "inline" }}>✍️ Signer Dashboard</h2>
                 </div>
                 {activeSessions[activeSessionDocId] && (
                   <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "#555" }}>
@@ -1768,7 +1768,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
 
             {/* Screen Sharing + Document Editor */}
             <ScreenRecorder
-              role="owner"
+              role="signer"
               sessionId={resolveDocSessionId(docs.find((d) => d.id === activeSessionDocId), activeSessions, previousSessions) || ""}
               socket={socket}
             />
@@ -1884,7 +1884,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
                   ←
                 </button>
                 <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700, color: "#1a1a2e" }}>
-                  Owner Dashboard
+                  Signer Dashboard
                 </h1>
               </div>
               {activeSessions[activeSessionDocId] && (
@@ -2105,7 +2105,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
                   <div style={{ marginTop: "6px", fontSize: "13px", color: "#1f2937" }}>
                     <div style={{ fontWeight: 600 }}>{authUser?.username || "Unknown"}</div>
                     <div style={{ fontSize: "12px", color: "#64748b" }}>
-                      {authUser?.role ? authUser.role.toUpperCase() : "OWNER"} • ID: {authUser?.userId || "—"}
+                      {authUser?.role ? authUser.role.toUpperCase() : "SIGNER"} • ID: {authUser?.userId || "—"}
                     </div>
                   </div>
                 </div>
@@ -2203,7 +2203,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
               </button>
 
               <button
-                onClick={() => navigate("/owner/session")}
+                onClick={() => navigate("/signer/session")}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -2398,7 +2398,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
               const hasDocumentSession = doc.sessionId || hasActiveSession || hasPreviousSession;
 
               // Join button appears when backend marks session_started and a session id is available.
-              // Do not depend only on in-memory socket maps because the owner may miss the live event.
+              // Do not depend only on in-memory socket maps because the signer may miss the live event.
               const showJoinButton =
                 status === 'session_started' &&
                 Boolean(hasDocumentSession);

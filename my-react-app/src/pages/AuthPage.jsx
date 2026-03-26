@@ -7,14 +7,14 @@ const AUTH_STORAGE_KEY = 'notary.authUser'
 const AUTH_SESSION_TTL_MS = 8 * 60 * 60 * 1000
 
 const getDefaultRouteByRole = (role) => {
-  if (role === 'owner') return '/owner/dashboard'
+  if (role === 'signer') return '/signer/dashboard'
   if (role === 'notary') return '/notary/dashboard'
   if (role === 'admin') return '/admin'
   return '/'
 }
 
 const getKbaRedirectPath = (user) => {
-  if (!user || !['owner', 'notary'].includes(user.role)) return null
+  if (!user || !['signer', 'notary'].includes(user.role)) return null
   const status = String(user.kbaStatus || 'draft').trim().toLowerCase()
   if (status === 'kba_approved') return null
   if (status === 'kba_pending_review') return '/kba/pending'
@@ -24,7 +24,7 @@ const getKbaRedirectPath = (user) => {
 
 const isRoleRouteMatch = (role, path) => {
   if (!path) return false
-  if (role === 'owner') return path.startsWith('/owner')
+  if (role === 'signer') return path.startsWith('/signer')
   if (role === 'notary') return path.startsWith('/notary')
   if (role === 'admin') return path.startsWith('/admin')
   return false
@@ -66,7 +66,7 @@ const AuthPage = () => {
       })
 
       localStorage.removeItem('notary.role')
-      localStorage.removeItem('notary.ownerSessionId')
+      localStorage.removeItem('notary.signerSessionId')
       localStorage.removeItem('notary.lastSessionId')
       
       localStorage.setItem(

@@ -18,7 +18,7 @@ const useKonvaImage = (src) => {
 };
 
 // Draggable Image Component
-const DraggableImageElement = ({ element, onChange, onSelect, isSelected, notaryAssetBoxes = [], currentUserRole = 'owner', onInvalidDrag }) => {
+const DraggableImageElement = ({ element, onChange, onSelect, isSelected, notaryAssetBoxes = [], currentUserRole = 'signer', onInvalidDrag }) => {
   const image = useKonvaImage(element.image);
   const imageRef = useRef(null);
   const transformerRef = useRef(null);
@@ -43,8 +43,8 @@ const DraggableImageElement = ({ element, onChange, onSelect, isSelected, notary
     const newW = element.width || 100;
     const newH = element.height || 100;
 
-    // For owner, validate that the element stays inside a notary box
-    if (currentUserRole === "owner" && element.user === "owner") {
+    // For signer, validate that the element stays inside a notary box
+    if (currentUserRole === "signer" && element.user === "signer") {
       const isInsideBox = notaryAssetBoxes.some((box) => {
         const boxX = Number(box.x) || 0;
         const boxY = Number(box.y) || 0;
@@ -151,7 +151,7 @@ const CanvasBoard = ({
   overlayMode = false,
   isAssetBoxMode = false,
   onCreateAssetBox,
-  currentUserRole = 'owner',
+  currentUserRole = 'signer',
 }) => {
   const stageRef = useRef(null);
   const [selectedId, setSelectedId] = useState(null);
@@ -175,7 +175,7 @@ const CanvasBoard = ({
 
   const selectedElement = elements.find((el) => el.id === selectedId);
   const notaryAssetBoxes = elements.filter((el) => el.type === "box" && el.user === "notary");
-  // Notary can delete any asset; Owner can only delete their own
+  // Notary can delete any asset; Signer can only delete their own
   const canDelete = !selectedElement || currentUserRole === 'notary' || selectedElement.user === currentUserRole;
 
   const createTextAssetImage = (text) => {
@@ -216,7 +216,7 @@ const CanvasBoard = ({
       width,
       height,
       type: 'text',
-      user: 'owner',
+      user: 'signer',
     };
 
     onElementAdd(newTextElement);
@@ -232,13 +232,13 @@ const CanvasBoard = ({
 
     const newSignatureElement = {
       id: `signature-${Date.now()}`,
-      image: signatureImage || createSignatureAssetImage('Owner'),
+      image: signatureImage || createSignatureAssetImage('Signer'),
       x: (selectedElement.x || 0) + margin,
       y: (selectedElement.y || 0) + (selectedElement.height || 80) - height - margin,
       width,
       height,
       type: 'signature',
-      user: 'owner',
+      user: 'signer',
     };
 
     onElementAdd(newSignatureElement);
@@ -309,7 +309,7 @@ const CanvasBoard = ({
     let nextWidth = defaultWidth;
     let nextHeight = defaultHeight;
 
-    if (currentUserRole === "owner") {
+    if (currentUserRole === "signer") {
       if (notaryAssetBoxes.length === 0) {
         showToast("Wait for notary to create asset box");
         return;
@@ -334,7 +334,7 @@ const CanvasBoard = ({
         return;
       }
 
-      // Fit owner asset completely inside the target notary box.
+      // Fit signer asset completely inside the target notary box.
       const boxX = Number(targetBox.x) || 0;
       const boxY = Number(targetBox.y) || 0;
       const boxW = Math.max(24, Number(targetBox.width) || 0);
@@ -456,7 +456,7 @@ const CanvasBoard = ({
         </button>
       )}
 
-      {selectedElement && selectedElement.type === 'box' && selectedElement.user === 'notary' && currentUserRole === 'owner' && (
+      {selectedElement && selectedElement.type === 'box' && selectedElement.user === 'notary' && currentUserRole === 'signer' && (
         <div
           style={{
             position: 'absolute',
@@ -620,7 +620,7 @@ const CanvasBoard = ({
               boxShadow: '0 12px 28px rgba(0,0,0,0.26)',
             }}
           >
-            <h3 style={{ margin: '0 0 10px', color: '#334155' }}>Draw Owner Signature</h3>
+            <h3 style={{ margin: '0 0 10px', color: '#334155' }}>Draw Signer Signature</h3>
             <SignaturePad
               onSignatureGenerated={(imageUrl) => {
                 addSignatureAssetToSelectedBox(imageUrl);

@@ -12,7 +12,7 @@ import { fetchOwnerDocuments, payOwnerDocumentSession } from "../utils/apiClient
 const EDITOR_WIDTH = 900;
 const EDITOR_HEIGHT = 1300;
 
-const getOwnerElementsStorageKey = (sessionId) => `owner.elements.${sessionId}`;
+const getOwnerElementsStorageKey = (sessionId) => `signer.elements.${sessionId}`;
 
 const loadOwnerElements = (sessionId) => {
   if (!sessionId) return [];
@@ -39,7 +39,7 @@ const OwnerPage = () => {
     const sessionId = params.get("sessionId");
     
     if (!sessionId) {
-      navigate("/owner/doc/dashboard", { replace: true });
+      navigate("/signer/doc/dashboard", { replace: true });
       return;
     }
   }, [navigate]);
@@ -112,18 +112,18 @@ const OwnerPage = () => {
   }, []);
 
   useEffect(() => {
-    console.log('📡 [OWNER] Setting up socket listeners');
+    console.log('📡 [SIGNER] Setting up socket listeners');
     // Reuse existing session on refresh when possible.
     const params = new URLSearchParams(window.location.search);
     const roomIdFromUrl = params.get("sessionId");
-    const roomIdFromStorage = localStorage.getItem("notary.ownerSessionId");
+    const roomIdFromStorage = localStorage.getItem("notary.signerSessionId");
     const roomId = roomIdFromUrl || roomIdFromStorage || `notary-session-${Date.now()}`;
 
     setSessionId(roomId);
-    localStorage.setItem("notary.ownerSessionId", roomId);
+    localStorage.setItem("notary.signerSessionId", roomId);
     localStorage.setItem("notary.lastSessionId", roomId);
 
-    params.set("role", "owner");
+    params.set("role", "signer");
     params.set("sessionId", roomId);
     window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
 
@@ -135,35 +135,35 @@ const OwnerPage = () => {
       }
     })();
 
-    console.log('📡 [OWNER] Joining session:', {roomId, role: 'owner', userId: authUser.userId});
+    console.log('📡 [SIGNER] Joining session:', {roomId, role: 'signer', userId: authUser.userId});
     socket.emit("joinSession", {
       roomId,
-      role: "owner",
+      role: "signer",
       userId: authUser.userId || socket.id,
-      username: authUser.username || "Owner",
+      username: authUser.username || "Signer",
       token: authUser.token,
     });
 
     // Listen for element updates from notary
     socket.on("elementAdded", (element) => {
-      console.log("✏️ [OWNER] Notary added element:", element);
+      console.log("✏️ [SIGNER] Notary added element:", element);
       setElements((prev) => [...prev, element]);
     });
 
     socket.on("elementUpdated", (updatedElement) => {
-      console.log("🔄 [OWNER] Notary updated element:", updatedElement.id);
+      console.log("🔄 [SIGNER] Notary updated element:", updatedElement.id);
       setElements((prev) =>
         prev.map((el) => (el.id === updatedElement.id ? updatedElement : el))
       );
     });
 
     socket.on("elementRemoved", (elementId) => {
-      console.log("🗑️ [OWNER] Notary removed element:", elementId);
+      console.log("🗑️ [SIGNER] Notary removed element:", elementId);
       setElements((prev) => prev.filter((el) => el.id !== elementId));
     });
 
     socket.on("usersConnected", (users) => {
-      console.log("👥 [OWNER] Users connected:", users);
+      console.log("👥 [SIGNER] Users connected:", users);
       setConnectedUsers(users);
       // Check if notary is in the connected users
       const notary = users.find(u => u.role === 'notary');
@@ -171,30 +171,30 @@ const OwnerPage = () => {
     });
 
     socket.on("sessionStatus", (status) => {
-      console.log("📊 [OWNER] Session status:", status);
+      console.log("📊 [SIGNER] Session status:", status);
       setSessionStatus(status);
       setNotaryConnected(status.notaryConnected);
     });
 
     socket.on("documentShared", (data) => {
-      console.log("📄 [OWNER] Document shared by notary:", data.fileName);
+      console.log("📄 [SIGNER] Document shared by notary:", data.fileName);
       setUploadedFile(data.pdfDataUrl);
       setUploadedFileName(data.fileName || "document.pdf");
     });
 
     socket.on("documentScrolled", (data) => {
-      console.log('[OWNER SCROLL] Received documentScrolled event:', JSON.stringify(data));
+      console.log('[SIGNER SCROLL] Received documentScrolled event:', JSON.stringify(data));
       const scrollTarget = editorScrollRef.current || pdfScrollRef.current;
       if (!scrollTarget) {
-        console.warn('[OWNER SCROLL] ❌ No scroll target found');
-        console.warn('[OWNER SCROLL] editorScrollRef?.current:', editorScrollRef.current);
-        console.warn('[OWNER SCROLL] pdfScrollRef?.current:', pdfScrollRef.current);
+        console.warn('[SIGNER SCROLL] ❌ No scroll target found');
+        console.warn('[SIGNER SCROLL] editorScrollRef?.current:', editorScrollRef.current);
+        console.warn('[SIGNER SCROLL] pdfScrollRef?.current:', pdfScrollRef.current);
         return;
       }
-      console.log('[OWNER SCROLL] ✅ Found scroll target, scrollHeight:', scrollTarget.scrollHeight, 'clientHeight:', scrollTarget.clientHeight);
+      console.log('[SIGNER SCROLL] ✅ Found scroll target, scrollHeight:', scrollTarget.scrollHeight, 'clientHeight:', scrollTarget.clientHeight);
       
       if (data?.scrollRatio === undefined && data?.scrollPosition === undefined) {
-        console.warn('[OWNER SCROLL] No scroll metrics in data');
+        console.warn('[SIGNER SCROLL] No scroll metrics in data');
         return;
       }
 
@@ -203,14 +203,14 @@ const OwnerPage = () => {
         ? maxScrollable * Number(data.scrollRatio)
         : Number(data.scrollPosition);
       const finalScrollTop = Number.isFinite(nextScrollTop) ? nextScrollTop : 0;
-      console.log('[OWNER SCROLL] ✅ Applying scroll - container scrollHeight:', scrollTarget.scrollHeight, 'setting scrollTop to:', finalScrollTop, 'from scrollRatio:', data?.scrollRatio);
+      console.log('[SIGNER SCROLL] ✅ Applying scroll - container scrollHeight:', scrollTarget.scrollHeight, 'setting scrollTop to:', finalScrollTop, 'from scrollRatio:', data?.scrollRatio);
       scrollTarget.scrollTop = finalScrollTop;
     });
 
     socket.on("adminSessionTerminated", (data) => {
       if (!data?.sessionId || data.sessionId !== roomId) return;
       alert(data?.message || "Admin terminated this session.");
-      navigate("/owner/doc/dashboard", { replace: true });
+      navigate("/signer/doc/dashboard", { replace: true });
     });
 
     socket.on("documentPaymentRequested", (data) => {
@@ -309,7 +309,7 @@ const OwnerPage = () => {
     };
   }, [sessionId]);
 
-  // Load owner elements from localStorage when sessionId is available
+  // Load signer elements from localStorage when sessionId is available
   useEffect(() => {
     if (sessionId) {
       const savedElements = loadOwnerElements(sessionId);
@@ -317,12 +317,12 @@ const OwnerPage = () => {
     }
   }, [sessionId]);
 
-  // Cleanup: Notify when owner leaves the session
+  // Cleanup: Notify when signer leaves the session
   useEffect(() => {
     return () => {
       if (sessionId) {
         socket.emit("ownerLeftSession", { sessionId });
-        localStorage.removeItem("notary.ownerSessionId");
+        localStorage.removeItem("notary.signerSessionId");
       }
     };
   }, [sessionId]);
@@ -373,7 +373,7 @@ const OwnerPage = () => {
         name: file.name,
         type: "image",
         image: assetImage,
-        user: "owner",
+        user: "signer",
       });
 
       socket.emit("documentShared", payload);
@@ -527,7 +527,7 @@ const OwnerPage = () => {
     <div style={{ display: "flex", height: "100vh" }}>
       {/* Sidebar */}
       <SidebarAssets
-        userRole="owner"
+        userRole="signer"
         sessionId={sessionId}
         userId={authUser.userId}
         showAssets={true}
@@ -541,7 +541,7 @@ const OwnerPage = () => {
         {/* Header */}
         <div style={{ marginBottom: "15px", backgroundColor: "#e3f2fd", padding: "15px", borderRadius: "5px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
-            <h2 style={{ margin: 0 }}>📄 Owner Dashboard</h2>
+            <h2 style={{ margin: 0 }}>📄 Signer Dashboard</h2>
             <span style={{
               display: "inline-flex", alignItems: "center", gap: "5px",
               padding: "4px 10px", borderRadius: "20px", fontSize: "13px", fontWeight: "bold",
@@ -662,7 +662,7 @@ const OwnerPage = () => {
           )}
         </div>
 
-        <ScreenRecorder role="owner" sessionId={sessionId || ""} socket={socket} />
+        <ScreenRecorder role="signer" sessionId={sessionId || ""} socket={socket} />
 
         {/* Main Content Area */}
         <div style={{ flex: 1, minWidth: 0, backgroundColor: "#f2f2f2", padding: "12px" }}>
@@ -707,7 +707,7 @@ const OwnerPage = () => {
                     canvasHeight={EDITOR_HEIGHT}
                     overlayMode
                     showGuide={false}
-                    currentUserRole="owner"
+                    currentUserRole="signer"
                   />
                 </div>
               </div>

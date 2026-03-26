@@ -140,16 +140,16 @@ const HomePage = () => {
         <div className="roles-grid">
           <div className="role-card">
             <div className="role-icon" />
-            <h3>Document Owners</h3>
+            <h3>Document Signers</h3>
             <p>Securely upload documents and get them notarized with e-signatures</p>
             <button
               className="role-btn"
               onClick={() => {
-                localStorage.setItem("notary.role", "owner");
-                navigate("/owner");
+                localStorage.setItem("notary.role", "signer");
+                navigate("/signer");
               }}
             >
-              Continue as Owner
+              Continue as Signer
             </button>
           </div>
           <div className="role-card">

@@ -105,7 +105,7 @@ const OwnerDocumentViewPage = () => {
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('[OwnerDocumentView] download owner document failed:', error);
+      console.error('[OwnerDocumentView] download signer document failed:', error);
       alert(`Failed to download document: ${error.message || 'Unknown error'}`);
     }
   };
@@ -156,7 +156,7 @@ const OwnerDocumentViewPage = () => {
   };
 
   const handleBack = () => {
-    navigate("/owner/doc/dashboard");
+    navigate("/signer/doc/dashboard");
   };
 
   return (
@@ -280,9 +280,9 @@ const OwnerDocumentViewPage = () => {
                       <button
                         onClick={() => {
                           const normalizedSessionId = normalizeSessionId(doc.sessionId);
-                          localStorage.setItem("notary.ownerSessionId", normalizedSessionId);
+                          localStorage.setItem("notary.signerSessionId", normalizedSessionId);
                           localStorage.setItem("notary.lastSessionId", normalizedSessionId);
-                          navigate("/owner/session");
+                          navigate("/signer/session");
                         }}
                         style={{
                           border: "1px solid #cbd5e1",

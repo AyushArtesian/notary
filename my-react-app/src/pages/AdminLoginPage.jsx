@@ -34,7 +34,7 @@ const AdminLoginPage = () => {
       }
 
       localStorage.removeItem('notary.role')
-      localStorage.removeItem('notary.ownerSessionId')
+      localStorage.removeItem('notary.signerSessionId')
       localStorage.removeItem('notary.lastSessionId')
 
       localStorage.setItem(

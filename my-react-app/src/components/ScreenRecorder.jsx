@@ -3,7 +3,7 @@ import { uploadSessionRecording } from "../utils/apiClient";
 
 const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
   const isNotaryRole = role === "notary";
-  const isOwnerRole = role === "owner";
+  const isOwnerRole = role === "signer";
   const canHostLiveMeeting = isNotaryRole || isOwnerRole;
 
   const [isRecording, setIsRecording] = useState(false);
@@ -756,7 +756,7 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
       <div style={{ display: "flex", gap: "10px", marginBottom: "10px" }}>
         {isOwnerRole ? (
           <div style={{ color: "#555", alignSelf: "center" }}>
-            {/* Owner only sees screen share controls; no waiting text */}
+            {/* Signer only sees screen share controls; no waiting text */}
           </div>
         ) : (
           <div style={{ color: "#555", fontStyle: "italic", alignSelf: "center" }}>
@@ -890,7 +890,7 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
               fontWeight: "bold",
             }}
           >
-            {isNotaryRole ? "Owner Camera" : "Owner Camera (You)"}
+            {isNotaryRole ? "Signer Camera" : "Signer Camera (You)"}
           </div>
           {(isNotaryRole ? remoteCameraStreamState : ownerLocalCameraStreamState) ? (
             <video
@@ -902,7 +902,7 @@ const ScreenRecorder = ({ role = null, sessionId = "", socket = null }) => {
             />
           ) : (
             <div style={{ color: "#fff", padding: "12px", textAlign: "center" }}>
-              Waiting for owner camera...
+              Waiting for signer camera...
             </div>
           )}
         </div>

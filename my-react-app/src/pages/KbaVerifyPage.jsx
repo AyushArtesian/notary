@@ -30,7 +30,7 @@ const setAuthKbaFields = (user = {}) => {
 }
 
 const getDefaultRouteByRole = (role) => {
-  if (role === 'owner') return '/owner/dashboard'
+  if (role === 'signer') return '/signer/dashboard'
   if (role === 'notary') return '/notary/doc/dashboard'
   return '/'
 }
@@ -207,7 +207,7 @@ const KbaVerifyPage = () => {
       <div className="kba-card">
         <h1 className="kba-title">Complete Your KBA Verification</h1>
         <p className="kba-subtitle">
-          To use owner and notary dashboards, complete OTP verification and submit your identity document for KBA approval.
+          To use signer and notary dashboards, complete OTP verification and submit your identity document for KBA approval.
         </p>
         <div className="kba-status-pill">Current Status: {currentKbaStatus.replace(/_/g, ' ')}</div>
 

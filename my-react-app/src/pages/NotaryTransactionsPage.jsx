@@ -89,7 +89,7 @@ const NotaryTransactionsPage = () => {
                 <thead>
                   <tr>
                     <th>Document</th>
-                    <th>Owner</th>
+                    <th>Signer</th>
                     <th>Amount</th>
                     <th>Status</th>
                     <th>Payment</th>

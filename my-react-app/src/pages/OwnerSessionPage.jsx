@@ -37,7 +37,7 @@ const OwnerSessionPage = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const id = normalizeSessionId(localStorage.getItem("notary.ownerSessionId") || "");
+    const id = normalizeSessionId(localStorage.getItem("notary.signerSessionId") || "");
     setSessionId(id);
 
     if (!id) return;
@@ -47,9 +47,9 @@ const OwnerSessionPage = () => {
     const emitJoinSession = () => {
       socket.emit("joinSession", {
         roomId: id,
-        role: "owner",
+        role: "signer",
         userId: authUser?.userId || socket.id,
-        username: authUser?.username || "Owner",
+        username: authUser?.username || "Signer",
         token: authUser?.token,
       });
     };
@@ -73,7 +73,7 @@ const OwnerSessionPage = () => {
       if (!data?.sessionId || data.sessionId !== id) return;
       alert(data?.message || "Admin terminated this session.");
       setNotaries([]);
-      navigate("/owner/doc/dashboard", { replace: true });
+      navigate("/signer/doc/dashboard", { replace: true });
     };
 
     const onDocumentPaymentRequested = (data) => {
@@ -254,7 +254,7 @@ const OwnerSessionPage = () => {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             <button
-              onClick={() => navigate("/owner/doc/dashboard")}
+              onClick={() => navigate("/signer/doc/dashboard")}
               style={{
                 background: "none",
                 border: "none",

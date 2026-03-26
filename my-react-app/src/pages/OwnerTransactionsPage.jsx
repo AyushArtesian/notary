@@ -59,7 +59,7 @@ const OwnerTransactionsPage = () => {
 
   return (
     <NotaryWorkspaceShell
-      sidebarRole="owner"
+      sidebarRole="signer"
       title="Transactions"
       subtitle="All documents for which your payment is completed"
     >

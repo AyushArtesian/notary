@@ -67,7 +67,7 @@ const getAuthUser = () => {
 }
 
 const getDefaultRouteByRole = (role) => {
-  if (role === 'owner') return '/owner/dashboard'
+  if (role === 'signer') return '/signer/dashboard'
   if (role === 'notary') return '/notary/dashboard'
   if (role === 'admin') return '/admin'
   return null
@@ -75,7 +75,7 @@ const getDefaultRouteByRole = (role) => {
 
 const getKbaRedirectPath = (authUser) => {
   const role = authUser?.role
-  if (!['owner', 'notary'].includes(role)) return null
+  if (!['signer', 'notary'].includes(role)) return null
 
   const status = String(authUser?.kbaStatus || 'draft').trim().toLowerCase()
   const otpVerified = Boolean(authUser?.otpVerified)
@@ -148,7 +148,7 @@ function RequireKbaFlowAccess({ children }) {
     return <Navigate to="/login" replace />
   }
 
-  if (!['owner', 'notary'].includes(authUser.role)) {
+  if (!['signer', 'notary'].includes(authUser.role)) {
     const fallback = getDefaultRouteByRole(authUser.role)
     return <Navigate to={fallback || '/'} replace />
   }
@@ -216,10 +216,10 @@ function App() {
             element={<HomePage />}
           />
           <Route
-            path="/owner/dashboard"
+            path="/signer/dashboard"
             element={
               <RequireAuth>
-                <RequireRole allowedRoles={['owner']}>
+                <RequireRole allowedRoles={['signer']}>
                   <RequireKbaApproval>
                     <OwnerHomeDashboardPage />
                   </RequireKbaApproval>
@@ -228,10 +228,10 @@ function App() {
             }
           />
           <Route
-            path="/owner/transactions"
+            path="/signer/transactions"
             element={
               <RequireAuth>
-                <RequireRole allowedRoles={['owner']}>
+                <RequireRole allowedRoles={['signer']}>
                   <RequireKbaApproval>
                     <OwnerTransactionsPage />
                   </RequireKbaApproval>
@@ -240,10 +240,10 @@ function App() {
             }
           />
           <Route
-            path="/owner/meetings"
+            path="/signer/meetings"
             element={
               <RequireAuth>
-                <RequireRole allowedRoles={['owner']}>
+                <RequireRole allowedRoles={['signer']}>
                   <RequireKbaApproval>
                     <OwnerMeetingsPage />
                   </RequireKbaApproval>
@@ -252,10 +252,10 @@ function App() {
             }
           />
           <Route
-            path="/owner/session"
+            path="/signer/session"
             element={
               <RequireAuth>
-                <RequireRole allowedRoles={['owner']}>
+                <RequireRole allowedRoles={['signer']}>
                   <RequireKbaApproval>
                     <OwnerSessionPage />
                   </RequireKbaApproval>
@@ -264,10 +264,10 @@ function App() {
             }
           />
           <Route
-            path="/owner/doc/dashboard"
+            path="/signer/doc/dashboard"
             element={
               <RequireAuth>
-                <RequireRole allowedRoles={['owner']}>
+                <RequireRole allowedRoles={['signer']}>
                   <RequireKbaApproval>
                     <OwnerDocDashboardWrapper />
                   </RequireKbaApproval>
@@ -276,10 +276,10 @@ function App() {
             }
           />
           <Route
-            path="/owner/doc/view/:docId"
+            path="/signer/doc/view/:docId"
             element={
               <RequireAuth>
-                <RequireRole allowedRoles={['owner']}>
+                <RequireRole allowedRoles={['signer']}>
                   <RequireKbaApproval>
                     <OwnerDocumentViewPage />
                   </RequireKbaApproval>
@@ -288,10 +288,10 @@ function App() {
             }
           />
           <Route
-            path="/owner"
+            path="/signer"
             element={
               <RequireAuth>
-                <RequireRole allowedRoles={['owner']}>
+                <RequireRole allowedRoles={['signer']}>
                   <RequireKbaApproval>
                     <OwnerPage />
                   </RequireKbaApproval>
