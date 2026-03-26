@@ -117,5 +117,53 @@ input[type="text"] {
   border-radius: 4px;
 }
 
+@media (max-width: 1024px) {
+  .pdf-viewer {
+    width: 100%;
+  }
+
+  .pdf-controls {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .canvas-board {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .app,
+  #root,
+  body,
+  html {
+    min-width: 100%;
+  }
+
+  .sidebar-assets {
+    display: block;
+    width: 100%;
+    margin-bottom: 10px;
+  }
+
+  .notary-card,
+  .metric-card,
+  .analytics-card,
+  .transaction-section {
+    border-radius: 10px;
+    margin-bottom: 10px;
+  }
+
+  input[type="file"],
+  input[type="text"],
+  button {
+    width: 100%;
+  }
+
+  button {
+    padding: 10px 12px;
+  }
+}
+
 
 

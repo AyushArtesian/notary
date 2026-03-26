@@ -126,3 +126,42 @@
     width: 200px;
   }
 }
+
+@media (max-width: 768px) {
+  .notary-sidebar {
+    position: relative;
+    width: 100%;
+    height: auto;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+    padding: 6px 8px;
+    background: #0f172a;
+  }
+
+  .sidebar-header,
+  .sidebar-profile,
+  .sidebar-footer {
+    display: none;
+  }
+
+  .sidebar-menu {
+    flex-direction: row;
+    gap: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    width: 100%;
+  }
+
+  .menu-item {
+    min-width: auto;
+    white-space: nowrap;
+    flex: 0 0 auto;
+    font-size: 13px;
+    padding: 8px 10px;
+  }
+}
+
