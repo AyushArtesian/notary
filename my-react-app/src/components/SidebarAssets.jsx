@@ -23,7 +23,7 @@ const BASE_ASSETS = [
     name: "Signer Signature",
     type: "signature",
     image:
-      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 50'%3E%3Ctext x='10' y='35' font-family='cursive' font-size='32' fill='black'%3EOwner%3C/text%3E%3C/svg%3E",
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 50'%3E%3Ctext x='10' y='35' font-family='cursive' font-size='32' fill='black'%3ESigner%3C/text%3E%3C/svg%3E",
     user: "signer",
   },
   {

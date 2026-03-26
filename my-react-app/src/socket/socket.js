@@ -26,6 +26,11 @@ const getStoredAuthToken = () => {
   }
 };
 
+const deriveDevTunnelSocketUrl = (origin, fallbackPort = '5001') => {
+  // Example: https://abc-5173.euw.devtunnels.ms -> https://abc-5000.euw.devtunnels.ms
+  return String(origin || '').replace(/-(\d+)(\.[^.]+\.devtunnels\.ms)$/i, `-${fallbackPort}$2`);
+};
+
 // Detect socket server URL based on current host and env variables
 const getSocketUrl = () => {
   const env =
@@ -35,12 +40,14 @@ const getSocketUrl = () => {
     import.meta.env.VITE_REACT_APP_SERVER_URL;
 
   const isLocalhost = isLocalPageHost();
+  const derivedTunnelUrl = deriveDevTunnelSocketUrl(window.location.origin, import.meta.env.VITE_SOCKET_PORT || '5001');
 
   const localSocketCandidates = ['http://localhost:5001', 'http://localhost:5000', 'http://localhost:5002'];
 
   const fallbackUrls = [
     ...(isLocalhost ? localSocketCandidates : []),
     env,
+    derivedTunnelUrl,
     window.location.origin,
     ...(!isLocalhost ? localSocketCandidates : []),
   ].filter((url) => !!url);
@@ -59,10 +66,10 @@ const getSocketUrl = () => {
   // On devtunnel/public URLs, localhost env values point to the viewer's own machine.
   if (isLoopbackUrl(env)) {
     console.warn('[Socket] Ignoring localhost socket env for non-local host; using window.origin instead');
-    return window.location.origin;
+    return derivedTunnelUrl || window.location.origin;
   }
 
-  return env || window.location.origin;
+  return env || window.location.origin || derivedTunnelUrl;
 };
 
 const SOCKET_SERVER_URL = getSocketUrl();
