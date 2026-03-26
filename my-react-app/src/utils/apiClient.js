@@ -7,9 +7,9 @@ const configuredApiBaseUrl =
 const isDev = Boolean(import.meta.env.DEV);
 const DEV_LOCAL_API_BASES = ['http://localhost:5000', 'http://localhost:5001', 'http://localhost:5002'];
 const API_BASE_STORAGE_KEY = 'notary.apiBaseUrl';
+const isBrowser = typeof window !== 'undefined';
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
 
-const isBrowser = typeof window !== 'undefined';
 const isLocalPageHost = isBrowser
   ? LOOPBACK_HOSTS.has(String(window.location.hostname || '').toLowerCase())
   : false;
@@ -32,10 +32,21 @@ const resolveReachableBaseUrl = (value) => {
 
 const configuredReachableApiBaseUrl = resolveReachableBaseUrl(configuredApiBaseUrl);
 
+const deriveDevTunnelApiFromWindowOrigin = () => {
+  if (!isBrowser) return '';
+  const apiPort = String(import.meta.env.VITE_API_PORT || '5001').trim();
+  const origin = window.location.origin;
+  // Example: https://abc-5173.euw.devtunnels.ms -> https://abc-5000.euw.devtunnels.ms
+  return origin.replace(/-(\d+)(\.[^.]+\.devtunnels\.ms)$/i, `-${apiPort}$2`);
+};
+
+const devTunnelDerivedApi = deriveDevTunnelApiFromWindowOrigin();
+
 const API_BASE_CANDIDATES = [
   ...(isDev && isLocalPageHost ? DEV_LOCAL_API_BASES : []),
   configuredReachableApiBaseUrl,
   (isBrowser ? window.location.origin : ''),
+  devTunnelDerivedApi,
 ].filter((v) => typeof v === 'string' && v.trim() !== '');
 
 // Deduplicate while preserving order

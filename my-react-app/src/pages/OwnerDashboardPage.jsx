@@ -638,6 +638,28 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
   }, [activeSessionDocId, docs, uploadedFile, sessionDocName]);
 
   useEffect(() => {
+    if (sessionJoined || activeSessionDocId || !sessionId) return;
+    if (!Array.isArray(docs) || docs.length === 0) return;
+
+    const normalizedRequestedSession = normalizeSessionId(sessionId);
+    if (!normalizedRequestedSession) return;
+
+    const matchingDoc = docs.find((doc) => {
+      const docSession = resolveDocSessionId(doc, activeSessions, previousSessions);
+      if (!docSession || normalizeSessionId(docSession) !== normalizedRequestedSession) return false;
+
+      const status = String(doc.status || '').trim().toLowerCase();
+      return status === 'session_started' || status === 'accepted' || status === 'payment_pending';
+    });
+
+    if (!matchingDoc) return;
+
+    setActiveSessionDocId(matchingDoc.id);
+    setSessionJoined(true);
+    if (setHideSidebar) setHideSidebar(true);
+  }, [sessionId, docs, activeSessions, previousSessions, sessionJoined, activeSessionDocId, setHideSidebar]);
+
+  useEffect(() => {
     if (!sessionJoined || !activeSessionDocId || !uploadedFile || notaries.length === 0) return;
 
     const activeDoc = docs.find((d) => d.id === activeSessionDocId);
@@ -1042,9 +1064,10 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       return updated;
     });
   }, [activeSessionDocId, docs]);
-// Join session when active session is selected (restores after refresh too)
+// Join session only when signer explicitly enters the live session editor
+// (or restores a previously active live session on refresh).
   useEffect(() => {
-    if (!activeSessionDocId) return;
+    if (!activeSessionDocId || !sessionJoined) return;
 
     const activeDoc = docs.find((doc) => doc.id === activeSessionDocId);
     const sessionIdFromUrl = new URLSearchParams(window.location.search).get("sessionId");
@@ -1134,12 +1157,22 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       }, 100);
     };
 
+    const onAuthError = (payload) => {
+      const message = payload?.message || 'Unable to join live session. Please login again.';
+      console.warn('[SIGNER] Socket authError:', payload);
+      setPaymentError(message);
+      setSessionJoined(false);
+      setActiveSessionDocId(null);
+      if (setHideSidebar) setHideSidebar(false);
+    };
+
     socket.on("usersConnected", onUsersConnected);
     socket.on("documentShared", onDocumentShared);
     socket.on("elementAdded", onElementAdded);
     socket.on("elementUpdated", onElementUpdated);
     socket.on("elementRemoved", onElementRemoved);
     socket.on("documentScrolled", onDocumentScrolled);
+    socket.on("authError", onAuthError);
 
     const emitJoinSession = () => {
       socket.emit("joinSession", {
@@ -1162,9 +1195,10 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       socket.off("elementUpdated", onElementUpdated);
       socket.off("elementRemoved", onElementRemoved);
       socket.off("documentScrolled", onDocumentScrolled);
+      socket.off("authError", onAuthError);
       socket.off("connect", onConnectRejoin);
     };
-  }, [activeSessionDocId, activeSessions, previousSessions, docs]);
+  }, [activeSessionDocId, activeSessions, previousSessions, docs, sessionJoined]);
 
   // Emit signer scroll updates so notary view stays synchronized bidirectionally.
   useEffect(() => {
