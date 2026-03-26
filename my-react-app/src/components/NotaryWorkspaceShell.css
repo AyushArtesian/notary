@@ -258,6 +258,60 @@
   text-align: center;
 }
 
+@media (max-width: 960px) {
+  .notary-workspace-main {
+    margin-left: 0;
+  }
+
+  .notary-workspace-header {
+    flex-wrap: wrap;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .notary-workspace-body,
+  .notary-workspace-content {
+    padding: 12px;
+  }
+
+  .notary-workspace-header h1 {
+    font-size: 24px;
+  }
+
+  .notary-workspace-header p {
+    font-size: 14px;
+  }
+
+  .notary-card {
+    border-radius: 8px;
+  }
+
+  .notary-table-wrap {
+    max-height: none;
+  }
+
+  .notary-table {
+    min-width: auto !important;
+  }
+}
+
+@media (max-width: 600px) {
+  .notary-workspace-content {
+    padding: 10px;
+  }
+
+  .notary-workspace-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .notary-workspace-actions .notary-btn,
+  .notary-workspace-actions button {
+    width: 100%;
+  }
+}
+
+
 .notary-table tbody tr:hover {
   background: #f0f5ff;
 }

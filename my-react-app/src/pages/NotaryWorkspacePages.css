@@ -279,6 +279,73 @@
   gap: 18px 30px;
 }
 
+@media (max-width: 1024px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+
+  .section-grid,
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .session-details-panel {
+    width: 100%;
+    margin: 0;
+    max-height: 90vh;
+  }
+
+  .session-details-body {
+    padding: 16px;
+  }
+
+  .session-notary-content h4 {
+    font-size: 24px;
+  }
+
+  .session-field-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .session-details-header h3 {
+    font-size: 24px;
+  }
+
+  .session-details-tabs {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .session-details-tabs button {
+    flex: 1;
+    min-width: auto;
+    padding: 8px 10px;
+    font-size: 14px;
+  }
+
+  .session-details-body {
+    padding: 12px;
+  }
+
+  .notary-table-wrap {
+    max-height: none;
+    overflow-x: auto;
+  }
+
+  .notary-table {
+    min-width: auto !important;
+  }
+}
+
+
 .session-field-grid > div {
   background: #f8fafc;
   border-radius: 10px;
