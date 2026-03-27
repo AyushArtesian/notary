@@ -159,6 +159,7 @@ async function initDatabase() {
     await pool.query(statement);
   }
 
+  await ensureSessionsSchemaCompatibility();
   await ensureOwnerDocumentsSchemaCompatibility();
 
   // For safety: do not auto-import all users from users.json on startup.
@@ -166,6 +167,11 @@ async function initDatabase() {
   await ensureSeedAdminUser();
 
   console.log('✅ PostgreSQL database initialized');
+}
+
+async function ensureSessionsSchemaCompatibility() {
+  await pool.query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS startedAt BIGINT');
+  await pool.query('ALTER TABLE sessions ADD COLUMN IF NOT EXISTS endedAt BIGINT');
 }
 
 async function ensureOwnerDocumentsSchemaCompatibility() {

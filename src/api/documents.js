@@ -3,6 +3,7 @@
  */
 const express = require('express');
 const { now, dbAll, dbGet, dbRun, persistDatabase } = require('../db');
+const { normalizeRoomId } = require('../utils/normalizers');
 
 const router = express.Router();
 
@@ -80,6 +81,19 @@ router.post('/', async (req, res) => {
     await persistDatabase();
 
     const document = await dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+    
+    // ✅ Emit real-time socket event to notify other users in the session
+    const io = req.app.get('io');
+    if (io && sessionId) {
+      const normalizedSessionId = normalizeRoomId(sessionId);
+      io.to(normalizedSessionId).emit('documentUploaded', {
+        document,
+        uploadedBy: ownerId,
+        uploaderName: safeOwnerName,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    
     res.json(document);
   } catch (error) {
     console.error('Error saving document:', error);
@@ -129,7 +143,7 @@ router.get('/notarized', async (req, res) => {
 router.put('/:id/review', async (req, res) => {
   try {
     const { id } = req.params;
-    const { notaryReview, notaryName } = req.body || {};
+    const { notaryReview, notaryName, sessionId } = req.body || {};
 
     if (!notaryReview || !['accepted', 'rejected', 'pending'].includes(notaryReview)) {
       return res.status(400).json({ error: 'Invalid review status' });
@@ -177,6 +191,20 @@ router.put('/:id/review', async (req, res) => {
     const document = await dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
     if (!document) {
       return res.status(404).json({ error: 'Document not found' });
+    }
+
+    // ✅ Emit real-time socket event to notify other users in the session
+    const io = req.app.get('io');
+    if (io && (sessionId || document.sessionId)) {
+      const finalSessionId = sessionId || document.sessionId;
+      const normalizedSessionId = normalizeRoomId(finalSessionId);
+      io.to(normalizedSessionId).emit('documentReviewed', {
+        document,
+        review: normalizedReview,
+        reviewedBy: notaryName || 'Unknown Notary',
+        timestamp: new Date().toISOString(),
+      });
+      console.log(`✅ Document ${id} notarized - emitted to session ${normalizedSessionId}`);
     }
 
     res.json(document);

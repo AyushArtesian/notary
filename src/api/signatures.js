@@ -3,6 +3,7 @@
  */
 const express = require('express');
 const { now, dbAll, dbGet, dbRun, persistDatabase } = require('../db');
+const { normalizeRoomId } = require('../utils/normalizers');
 
 const router = express.Router();
 
@@ -64,6 +65,19 @@ router.post('/', async (req, res) => {
     await persistDatabase();
 
     const saved = await dbGet('SELECT * FROM signatures WHERE id = :id', { id });
+    
+    // ✅ Emit real-time socket event for signature creation
+    const io = req.app.get('io');
+    if (io && sessionId) {
+      const normalizedSessionId = normalizeRoomId(sessionId);
+      io.to(normalizedSessionId).emit('signatureAdded', {
+        signature: saved,
+        addedBy: username || 'Unknown User',
+        timestamp: new Date().toISOString(),
+      });
+      console.log(`✅ Signature added in session ${normalizedSessionId}`);
+    }
+    
     res.json(saved);
   } catch (error) {
     console.error('Error saving signature:', error);

@@ -494,6 +494,7 @@ const AdminPage = () => {
                     <th>Session ID</th>
                     <th>Users</th>
                     <th>Participants</th>
+                    <th>Started</th>
                     <th>Created</th>
                     <th>Action</th>
                   </tr>
@@ -511,6 +512,7 @@ const AdminPage = () => {
                         <td>
                           {(session.users || []).map((u) => `${u.username} (${u.role})`).join(', ') || '-'}
                         </td>
+                        <td>{formatDate(session.startedAt)}</td>
                         <td>{formatDate(session.createdAt)}</td>
                         <td>
                           <button

@@ -1255,7 +1255,7 @@ async function extractSignatureCandidatesWithYolo({ dataUrl, pageNumber = 1, con
     throw new Error('A PDF or image data URL is required for signature extraction');
   }
 
-  const response = await fetchWithFallback('/api/signature-extract-yolo', {
+  const response = await fetchWithFallback('/api/signature-extraction/extract-yolo', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

@@ -63,6 +63,9 @@ const io = socketIO(server, {
   maxHttpBufferSize: 20e6, // 20 MB for PDF data transfers
 });
 
+// Attach io to app for access in routes
+app.set('io', io);
+
 // Express middleware
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '200mb' }));

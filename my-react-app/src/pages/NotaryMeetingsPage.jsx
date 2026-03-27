@@ -12,10 +12,25 @@ import './NotaryWorkspacePages.css';
 
 const normalize = (value) => String(value || '').trim().toLowerCase();
 
-const formatDate = (value) => {
-  if (!value) return '-';
+const parseDateValue = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const num = Number(value);
+  if (!Number.isNaN(num)) {
+    // Accept seconds or milliseconds
+    const maybeMs = Math.abs(num) < 1e12 ? num * 1000 : num;
+    if (!Number.isNaN(maybeMs) && Number.isFinite(maybeMs) && maybeMs > 0) {
+      return new Date(maybeMs);
+    }
+  }
+
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '-';
+  if (!Number.isNaN(date.getTime())) return date;
+  return null;
+};
+
+const formatDate = (value) => {
+  const date = parseDateValue(value);
+  if (!date) return '-';
   return date.toLocaleString();
 };
 
@@ -285,8 +300,8 @@ const NotaryMeetingsPage = () => {
           </thead>
           <tbody>
             {rows.map((row) => {
-              const startTime = row.startedAt || row.scheduledAt || row.startTime || row.startedDate;
-              const endTime = row.endedAt || row.completedAt || row.endTime;
+              const startTime = row.startedAt || row.scheduledAt || row.notarizedAt || row.startTime || row.startedDate;
+              const endTime = row.endedAt || row.notarizedAt || row.completedAt || row.paymentPaidAt || row.endTime;
 
               return (
                 <tr key={row.id}>

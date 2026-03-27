@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   participants TEXT,
   active INTEGER DEFAULT 1,
   terminated INTEGER DEFAULT 0,
+  startedAt BIGINT,
+  endedAt BIGINT,
   createdAt BIGINT NOT NULL,
   updatedAt BIGINT NOT NULL
 );

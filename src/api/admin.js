@@ -22,7 +22,7 @@ router.get('/overview', requireAuth, requireRole(['admin']), async (req, res) =>
     );
 
     const activeSessions = await dbAll(
-      `SELECT sessionId, ownerId, ownerUsername, participants, active, terminated, createdAt, updatedAt
+      `SELECT sessionId, ownerId, ownerUsername, participants, active, terminated, startedAt, endedAt, createdAt, updatedAt
       FROM sessions WHERE active = 1 ORDER BY updatedAt DESC LIMIT 20`
     );
 

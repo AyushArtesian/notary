@@ -23,7 +23,7 @@ router.get('/dashboard/stats', requireAuth, requireRole(['notary']), async (req,
 
     const onDemandCallsResult = await dbGet(
       `SELECT COUNT(*) as count FROM owner_documents
-       WHERE notaryId = :notaryId AND (scheduledAt IS NULL OR scheduledAt = 0) AND inProcess = 0`,
+       WHERE notaryId = :notaryId AND (scheduledAt IS NULL OR scheduledAt = 0) AND status = 'session_started'`,
       { notaryId }
     );
     const onDemandCalls = Number(onDemandCallsResult?.count || 0);
@@ -50,6 +50,9 @@ router.get('/dashboard/stats', requireAuth, requireRole(['notary']), async (req,
          ownerName,
          sessionAmount,
          status,
+         scheduledAt,
+         startedAt,
+         endedAt,
          notarizedAt,
          uploadedAt,
          paymentStatus,
@@ -68,17 +71,29 @@ router.get('/dashboard/stats', requireAuth, requireRole(['notary']), async (req,
       ownerName: doc.ownerName,
       amount: Number(doc.sessionAmount || 0),
       status: doc.status,
+      scheduledAt: doc.scheduledAt,
+      startedAt: doc.startedAt,
+      endedAt: doc.endedAt,
       date: doc.notarizedAt || doc.uploadedAt,
       paymentStatus: doc.paymentStatus || 'not_required',
       paymentDate: doc.paymentPaidAt,
     }));
 
-    const payoutResult = await dbGet(
+    const totalPayoutResult = await dbGet(
       `SELECT COALESCE(SUM(sessionAmount), 0) as totalPayout FROM owner_documents
+       WHERE notaryId = :notaryId AND sessionAmount > 0`,
+      { notaryId }
+    );
+    const paidPayoutResult = await dbGet(
+      `SELECT COALESCE(SUM(sessionAmount), 0) as paidPayout FROM owner_documents
        WHERE notaryId = :notaryId AND paymentStatus = 'paid' AND sessionAmount > 0`,
       { notaryId }
     );
-    const availableForPayout = Number(payoutResult?.totalPayout || 0);
+
+    const totalPayout = Number(totalPayoutResult?.totalPayout || 0);
+    const paidPayout = Number(paidPayoutResult?.paidPayout || 0);
+    const pendingPayout = Math.max(0, totalPayout - paidPayout);
+    const availableForPayout = totalPayout;
 
     res.json({
       success: true,
@@ -88,6 +103,8 @@ router.get('/dashboard/stats', requireAuth, requireRole(['notary']), async (req,
         scheduledCalls,
         totalTransactionAmount,
         availableForPayout,
+        pendingPayout,
+        paidPayout,
         transactions,
       },
     });

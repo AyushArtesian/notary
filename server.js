@@ -261,6 +261,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   participants TEXT,
   active INTEGER DEFAULT 1,
   terminated INTEGER DEFAULT 0,
+  startedAt INTEGER,
+  endedAt INTEGER,
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL
 );
@@ -512,6 +514,14 @@ function ensureSessionsSchema() {
     if (!columns.includes('terminated')) {
       console.log('🔧 Adding missing sessions.terminated column');
       db.exec('ALTER TABLE sessions ADD COLUMN terminated INTEGER DEFAULT 0;');
+    }
+    if (!columns.includes('startedAt')) {
+      console.log('🔧 Adding missing sessions.startedAt column');
+      db.exec('ALTER TABLE sessions ADD COLUMN startedAt INTEGER;');
+    }
+    if (!columns.includes('endedAt')) {
+      console.log('🔧 Adding missing sessions.endedAt column');
+      db.exec('ALTER TABLE sessions ADD COLUMN endedAt INTEGER;');
     }
   } catch (err) {
     console.warn('⚠️ Failed to ensure sessions schema:', err.message || err);
@@ -1032,19 +1042,25 @@ function upsertSessionParticipant({ sessionId, socketId, userId, username, role 
     notaryIds: JSON.stringify(notaryIds),
     participants: JSON.stringify(participants),
     active: 1,
+    terminated: 0,
+    startedAt: existing ? existing.startedAt : now(),
+    endedAt: existing ? existing.endedAt : null,
     createdAt: existing ? existing.createdAt : now(),
     updatedAt: now(),
   };
 
   dbRun(
-    `INSERT INTO sessions (sessionId, ownerId, ownerUsername, notaryIds, participants, active, createdAt, updatedAt)
-     VALUES (:sessionId, :ownerId, :ownerUsername, :notaryIds, :participants, :active, :createdAt, :updatedAt)
+    `INSERT INTO sessions (sessionId, ownerId, ownerUsername, notaryIds, participants, active, terminated, startedAt, endedAt, createdAt, updatedAt)
+     VALUES (:sessionId, :ownerId, :ownerUsername, :notaryIds, :participants, :active, :terminated, :startedAt, :endedAt, :createdAt, :updatedAt)
      ON CONFLICT(sessionId) DO UPDATE SET
        ownerId = excluded.ownerId,
        ownerUsername = excluded.ownerUsername,
        notaryIds = excluded.notaryIds,
        participants = excluded.participants,
        active = excluded.active,
+       terminated = excluded.terminated,
+       startedAt = COALESCE(excluded.startedAt, sessions.startedAt),
+       endedAt = COALESCE(excluded.endedAt, sessions.endedAt),
        updatedAt = excluded.updatedAt`,
     data
   );
@@ -1065,15 +1081,17 @@ function removeSessionParticipant(sessionId, socketId) {
 
   const signer = participants.find((p) => p.role === 'signer');
   const active = participants.length > 0 ? 1 : 0;
+  const endedAt = active === 0 ? now() : existing.endedAt;
 
   dbRun(
-    `UPDATE sessions SET participants = :participants, notaryIds = :notaryIds, ownerId = :ownerId, ownerUsername = :ownerUsername, active = :active, updatedAt = :updatedAt WHERE sessionId = :sessionId`,
+    `UPDATE sessions SET participants = :participants, notaryIds = :notaryIds, ownerId = :ownerId, ownerUsername = :ownerUsername, active = :active, endedAt = :endedAt, updatedAt = :updatedAt WHERE sessionId = :sessionId`,
     {
       participants: JSON.stringify(participants),
       notaryIds: JSON.stringify(notaryIds),
       ownerId: signer?.userId || null,
       ownerUsername: signer?.username || null,
       active,
+      endedAt,
       updatedAt: now(),
       sessionId,
     }
@@ -4053,6 +4071,21 @@ app.put('/api/signer-documents/:id/session-started', requireAuth, requireRole(['
         startedAt: startAtMs,
       }
     );
+
+    dbRun(
+      `UPDATE sessions
+       SET active = 1,
+           terminated = 0,
+           startedAt = COALESCE(startedAt, :startedAt),
+           updatedAt = :updatedAt
+       WHERE sessionId = :sessionId`,
+      {
+        sessionId,
+        startedAt: startAtMs,
+        updatedAt: now(),
+      }
+    );
+
     persistDatabase();
 
     const document = dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
@@ -4173,6 +4206,22 @@ app.put('/api/signer-documents/:id/session-ended', requireAuth, requireRole(['no
       status: document.status,
     });
 
+    const endedAtMs = now();
+
+    dbRun(
+      `UPDATE sessions
+       SET active = 0,
+           terminated = 1,
+           endedAt = :endedAt,
+           updatedAt = :updatedAt
+       WHERE sessionId = :sessionId`,
+      {
+        sessionId: document.sessionId || sessionId || null,
+        endedAt: endedAtMs,
+        updatedAt: now(),
+      }
+    );
+
     io.emit('notarySessionEnded', {
       documentId: document.id,
       sessionId: document.sessionId || sessionId || null,
@@ -4181,7 +4230,7 @@ app.put('/api/signer-documents/:id/session-ended', requireAuth, requireRole(['no
       paymentStatus: document.paymentStatus || 'not_required',
       notaryName: document.notaryName || notaryName || 'Unknown Notary',
       notaryUserId: document.notaryId || notaryUserId || null,
-      endedAt: new Date().toISOString(),
+      endedAt: new Date(endedAtMs).toISOString(),
     });
 
     res.json(document);
@@ -4526,13 +4575,21 @@ app.get('/api/notary/dashboard/stats', requireAuth, requireRole(['notary']), (re
       paymentDate: doc.paymentPaidAt
     }));
 
-    // Available for payout (paid transactions not yet claimed)
-    const payoutResult = dbGet(
+    const totalPayoutResult = dbGet(
       `SELECT COALESCE(SUM(sessionAmount), 0) as totalPayout FROM owner_documents 
+       WHERE notaryId = :notaryId AND sessionAmount > 0`,
+      { notaryId }
+    );
+    const paidPayoutResult = dbGet(
+      `SELECT COALESCE(SUM(sessionAmount), 0) as paidPayout FROM owner_documents 
        WHERE notaryId = :notaryId AND paymentStatus = 'paid' AND sessionAmount > 0`,
       { notaryId }
     );
-    const availableForPayout = payoutResult?.totalPayout || 0;
+
+    const totalPayout = Number(totalPayoutResult?.totalPayout || 0);
+    const paidPayout = Number(paidPayoutResult?.paidPayout || 0);
+    const pendingPayout = Math.max(0, totalPayout - paidPayout);
+    const availableForPayout = totalPayout;
 
     res.json({
       success: true,
@@ -4542,6 +4599,8 @@ app.get('/api/notary/dashboard/stats', requireAuth, requireRole(['notary']), (re
         scheduledCalls,
         totalTransactionAmount,
         availableForPayout,
+        paidPayout,
+        pendingPayout,
         transactions
       }
     });
@@ -4742,6 +4801,27 @@ io.on('connection', (socket) => {
 
     persistDatabase();
 
+    try {
+      if (data?.sessionId) {
+        const startedAtMs = now();
+        dbRun(
+          `UPDATE sessions
+           SET active = 1,
+               terminated = 0,
+               startedAt = COALESCE(startedAt, :startedAt),
+               updatedAt = :updatedAt
+           WHERE sessionId = :sessionId`,
+          {
+            sessionId: data.sessionId,
+            startedAt: startedAtMs,
+            updatedAt: now(),
+          }
+        );
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to persist session started on notarySessionStarted event:', err?.message || err);
+    }
+
     // Broadcast with complete context so signer knows to show "Join Session" button
     io.emit('notarySessionStarted', {
       documentId: data.documentId,
@@ -4752,9 +4832,31 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle notary ending a session — broadcast to all connected clients
+  // Handle notary ending a session — broadcast to all connected clients and update session state
   socket.on('notarySessionEnded', (data) => {
     console.log('🔔 Notary ended session:', data);
+
+    try {
+      if (data?.sessionId) {
+        const endedAtMs = now();
+        dbRun(
+          `UPDATE sessions
+           SET active = 0,
+               terminated = 1,
+               endedAt = :endedAt,
+               updatedAt = :updatedAt
+           WHERE sessionId = :sessionId`,
+          {
+            sessionId: data.sessionId,
+            endedAt: endedAtMs,
+            updatedAt: now(),
+          }
+        );
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to persist session termination on notarySessionEnded event:', err?.message || err);
+    }
+
     io.emit('notarySessionEnded', data);
   });
 

@@ -41,6 +41,8 @@ const NotaryDashboardPage = () => {
     return {
       totalCalls: Number(stats.totalCompletedCalls || 0),
       payout: Number(stats.availableForPayout || 0),
+      pendingPayout: Number(stats.pendingPayout || 0),
+      paidPayout: Number(stats.paidPayout || 0),
       scheduledMeetings: Number(stats.scheduledCalls || 0),
       onDemandCalls: Number(stats.onDemandCalls || 0),
       totalTransactions: tx.length,
@@ -69,6 +71,10 @@ const NotaryDashboardPage = () => {
                 <div className="kpi-item">
                   <p className="kpi-label">Available for Payout</p>
                   <p className="kpi-value small">{formatCurrency(summary.payout)}</p>
+                </div>
+                <div className="kpi-item">
+                  <p className="kpi-label">Pending Payout</p>
+                  <p className="kpi-value small">{formatCurrency(summary.pendingPayout)}</p>
                 </div>
                 <div className="kpi-item">
                   <p className="kpi-label">Scheduled Meetings</p>

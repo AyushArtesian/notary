@@ -71,7 +71,8 @@ router.put('/:id/notarize', requireAuth, requireRole(['notary']), requireKbaAppr
           paymentRequestedBy = :paymentRequestedBy,
           paymentPaidAt = :paymentPaidAt,
           paymentTransactionId = :paymentTransactionId,
-          paymentMethod = :paymentMethod
+          paymentMethod = :paymentMethod,
+          endedAt = :endedAt
       WHERE id = :id
     `,
       {
@@ -91,6 +92,7 @@ router.put('/:id/notarize', requireAuth, requireRole(['notary']), requireKbaAppr
         paymentPaidAt: null,
         paymentTransactionId: null,
         paymentMethod: null,
+        endedAt: nowMs,
       }
     );
     await persistDatabase();
@@ -508,9 +510,37 @@ router.put('/:id/session-started', requireAuth, requireRole(['notary']), require
         startedAt: startAtMs,
       }
     );
+
+    await dbRun(
+      `UPDATE sessions
+       SET active = 1,
+           terminated = 0,
+           startedAt = COALESCE(startedAt, :startedAt),
+           updatedAt = :updatedAt
+       WHERE sessionId = :sessionId`,
+      {
+        sessionId,
+        startedAt: startAtMs,
+        updatedAt: now(),
+      }
+    );
+
     await persistDatabase();
 
     const document = await dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+
+    const io = req.app && req.app.get('io');
+    if (io && sessionId) {
+      io.emit('notarySessionStarted', {
+        documentId: document.id,
+        sessionId,
+        notaryName: document.notaryName || notaryName || 'Unknown Notary',
+        notaryUserId: document.notaryId || notaryUserId || null,
+        startedAt: new Date(startAtMs).toISOString(),
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     return res.json(document);
   } catch (error) {
     console.error('Error marking signer document session started:', error);
@@ -600,7 +630,41 @@ router.put('/:id/session-ended', requireAuth, requireRole(['notary']), requireKb
     }
 
     await persistDatabase();
+
+    const endedAtMs = now();
+    const sessionIdToUpdate = existing.sessionId || null;
+    if (sessionIdToUpdate) {
+      await dbRun(
+        `UPDATE sessions
+         SET active = 0,
+             terminated = 1,
+             endedAt = :endedAt,
+             updatedAt = :updatedAt
+         WHERE sessionId = :sessionId`,
+        {
+          sessionId: sessionIdToUpdate,
+          endedAt: endedAtMs,
+          updatedAt: now(),
+        }
+      );
+    }
+
     const document = await dbGet('SELECT * FROM owner_documents WHERE id = :id', { id });
+
+    const io = req.app && req.app.get('io');
+    if (io && sessionIdToUpdate) {
+      io.emit('notarySessionEnded', {
+        documentId: document.id,
+        sessionId: sessionIdToUpdate,
+        status: document.status,
+        sessionAmount: Number(document.sessionAmount || 0),
+        paymentStatus: document.paymentStatus || 'not_required',
+        notaryName: document.notaryName || notaryName || 'Unknown Notary',
+        notaryUserId: document.notaryId || notaryUserId || null,
+        endedAt: new Date(endedAtMs).toISOString(),
+      });
+    }
+
     return res.json(document);
   } catch (error) {
     console.error('Error ending signer document session:', error);

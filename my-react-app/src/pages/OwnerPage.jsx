@@ -179,19 +179,22 @@ const OwnerPage = () => {
     });
 
     // Register all socket listeners - these will be attached once per session
-    const onElementAdded = (element) => {
+    const onElementAdded = (data) => {
+      const element = data?.element || data;
       console.log("✏️ [SIGNER] Notary added element:", element);
       setElements((prev) => [...prev, element]);
     };
 
-    const onElementUpdated = (updatedElement) => {
-      console.log("🔄 [SIGNER] Notary updated element:", updatedElement.id);
+    const onElementUpdated = (data) => {
+      const { elementId, updates } = data || {};
+      console.log("🔄 [SIGNER] Notary updated element:", elementId);
       setElements((prev) =>
-        prev.map((el) => (el.id === updatedElement.id ? updatedElement : el))
+        prev.map((el) => (el.id === elementId ? { ...el, ...updates } : el))
       );
     };
 
-    const onElementRemoved = (elementId) => {
+    const onElementRemoved = (data) => {
+      const { elementId } = data || {};
       console.log("🗑️ [SIGNER] Notary removed element:", elementId);
       setElements((prev) => prev.filter((el) => el.id !== elementId));
     };
@@ -525,7 +528,7 @@ const OwnerPage = () => {
     const newElements = [...elements, element];
     setElements(newElements);
     saveOwnerElements(sessionId, newElements);
-    socket.emit("elementAdded", element);
+    if (sessionId) socket.emit("elementAdded", { sessionId, element });
   };
 
   const handleElementUpdate = (elementId, updates) => {
@@ -536,14 +539,14 @@ const OwnerPage = () => {
     const newElements = elements.map((el) => (el.id === elementId ? updatedElement : el));
     setElements(newElements);
     saveOwnerElements(sessionId, newElements);
-    socket.emit("elementUpdated", updatedElement);
+    if (sessionId) socket.emit("elementUpdated", { sessionId, elementId, updates });
   };
 
   const handleElementRemove = (elementId) => {
     const newElements = elements.filter((el) => el.id !== elementId);
     setElements(newElements);
     saveOwnerElements(sessionId, newElements);
-    socket.emit("elementRemoved", elementId);
+    if (sessionId) socket.emit("elementRemoved", { sessionId, elementId });
   };
 
   const handlePayNow = async () => {

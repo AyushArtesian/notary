@@ -46,19 +46,25 @@ async function upsertSessionParticipant({ sessionId, socketId, userId, username,
     notaryIds: JSON.stringify(notaryIds),
     participants: JSON.stringify(participants),
     active: 1,
+    terminated: 0,
+    startedAt: existing ? existing.startedAt : now(),
+    endedAt: existing ? existing.endedAt : null,
     createdAt: existing ? existing.createdAt : now(),
     updatedAt: now(),
   };
 
   await dbRun(
-    `INSERT INTO sessions (sessionId, ownerId, ownerUsername, notaryIds, participants, active, createdAt, updatedAt)
-     VALUES (:sessionId, :ownerId, :ownerUsername, :notaryIds, :participants, :active, :createdAt, :updatedAt)
+    `INSERT INTO sessions (sessionId, ownerId, ownerUsername, notaryIds, participants, active, terminated, startedAt, endedAt, createdAt, updatedAt)
+     VALUES (:sessionId, :ownerId, :ownerUsername, :notaryIds, :participants, :active, :terminated, :startedAt, :endedAt, :createdAt, :updatedAt)
      ON CONFLICT (sessionId) DO UPDATE SET
        ownerId = EXCLUDED.ownerId,
        ownerUsername = EXCLUDED.ownerUsername,
        notaryIds = EXCLUDED.notaryIds,
        participants = EXCLUDED.participants,
        active = EXCLUDED.active,
+       terminated = EXCLUDED.terminated,
+       startedAt = COALESCE(EXCLUDED.startedAt, sessions.startedAt),
+       endedAt = COALESCE(EXCLUDED.endedAt, sessions.endedAt),
        updatedAt = EXCLUDED.updatedAt`,
     data
   );
@@ -79,15 +85,17 @@ async function removeSessionParticipant(sessionId, socketId) {
 
   const signer = participants.find((p) => p.role === 'signer');
   const active = participants.length > 0 ? 1 : 0;
+  const endedAt = active === 0 ? now() : existing.endedAt;
 
   await dbRun(
-    `UPDATE sessions SET participants = :participants, notaryIds = :notaryIds, ownerId = :ownerId, ownerUsername = :ownerUsername, active = :active, updatedAt = :updatedAt WHERE sessionId = :sessionId`,
+    `UPDATE sessions SET participants = :participants, notaryIds = :notaryIds, ownerId = :ownerId, ownerUsername = :ownerUsername, active = :active, endedAt = :endedAt, updatedAt = :updatedAt WHERE sessionId = :sessionId`,
     {
       participants: JSON.stringify(participants),
       notaryIds: JSON.stringify(notaryIds),
       ownerId: signer?.userId || null,
       ownerUsername: signer?.username || null,
       active,
+      endedAt,
       updatedAt: now(),
       sessionId,
     }
