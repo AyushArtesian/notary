@@ -2,6 +2,7 @@ import React, { Component } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import OwnerPage from './pages/OwnerPage'
 import OwnerDashboardPage from './pages/OwnerDashboardPage'
+import OwnerAssetsPage from './pages/OwnerAssetsPage'
 import OwnerDocDashboardWrapper from './pages/OwnerDocDashboardWrapper'
 import OwnerHomeDashboardPage from './pages/OwnerHomeDashboardPage'
 import OwnerTransactionsPage from './pages/OwnerTransactionsPage'
@@ -15,6 +16,7 @@ import NotaryToolsPage from './pages/NotaryToolsPage'
 import NotaryOnDemandPage from './pages/NotaryOnDemandPage'
 import NotaryMeetingsPage from './pages/NotaryMeetingsPage'
 import NotarySettingsPage from './pages/NotarySettingsPage'
+import NotaryAssetsPage from './pages/NotaryAssetsPage'
 import AdminPage from './pages/AdminPage'
 import HomePage from './pages/HomePage'
 import AuthPage from './pages/AuthPage'
@@ -252,6 +254,18 @@ function App() {
             }
           />
           <Route
+            path="/signer/assets"
+            element={
+              <RequireAuth>
+                <RequireRole allowedRoles={['signer']}>
+                  <RequireKbaApproval>
+                    <OwnerAssetsPage />
+                  </RequireKbaApproval>
+                </RequireRole>
+              </RequireAuth>
+            }
+          />
+          <Route
             path="/signer/session"
             element={
               <RequireAuth>
@@ -342,6 +356,18 @@ function App() {
           <Route
             path="/notary/on-demand"
             element={<Navigate to="/notary/witness" replace />}
+          />
+          <Route
+            path="/notary/assets"
+            element={
+              <RequireAuth>
+                <RequireRole allowedRoles={['notary']}>
+                  <RequireKbaApproval>
+                    <NotaryAssetsPage />
+                  </RequireKbaApproval>
+                </RequireRole>
+              </RequireAuth>
+            }
           />
           <Route
             path="/notary/meetings"

@@ -44,7 +44,7 @@ const API_BASE_CANDIDATES = [
 // Deduplicate while preserving order
 const uniqueCandidates = [...new Set(API_BASE_CANDIDATES)];
 
-const finalApiCandidates = uniqueCandidates.length ? uniqueCandidates : ['http://localhost:5001'];
+const finalApiCandidates = uniqueCandidates.length ? uniqueCandidates : ['http://localhost:5000'];
 
 const API_CANDIDATES = finalApiCandidates;
 
@@ -303,7 +303,7 @@ async function fetchWithNotFoundFallback(path, options = {}) {
 const API_BASE_URL =
   configuredReachableApiBaseUrl ||
   (isBrowser ? window.location.origin : '') ||
-  (isDev ? 'http://localhost:5001' : '');
+  (isDev ? 'http://localhost:5000' : '');
 
 console.log('[API Client] Base URL:', API_BASE_URL);
 
@@ -1255,7 +1255,7 @@ async function extractSignatureCandidatesWithYolo({ dataUrl, pageNumber = 1, con
     throw new Error('A PDF or image data URL is required for signature extraction');
   }
 
-  const response = await fetchWithFallback('/api/signature-extract-yolo', {
+  const response = await fetchWithFallback('/api/signature-extraction/extract-yolo', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

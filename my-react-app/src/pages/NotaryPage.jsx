@@ -171,19 +171,22 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
         }
       })();
 
-      const onElementAdded = (element) => {
+      const onElementAdded = (data) => {
+        const element = data?.element || data;
         console.log("✏️ [NOTARY] Signer added element:", element);
         setElements((prev) => [...prev, element]);
       };
 
-      const onElementUpdated = (updatedElement) => {
-        console.log("🔄 [NOTARY] Signer updated element:", updatedElement.id);
+      const onElementUpdated = (data) => {
+        const { elementId, updates, updatedBy } = data || {};
+        console.log("🔄 [NOTARY] Signer updated element:", elementId);
         setElements((prev) =>
-          prev.map((el) => (el.id === updatedElement.id ? updatedElement : el))
+          prev.map((el) => (el.id === elementId ? { ...el, ...updates } : el))
         );
       };
 
-      const onElementRemoved = (elementId) => {
+      const onElementRemoved = (data) => {
+        const { elementId, removedBy } = data || {};
         console.log("🗑️ [NOTARY] Signer removed element:", elementId);
         setElements((prev) => prev.filter((el) => el.id !== elementId));
       };
@@ -840,7 +843,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     const newElements = [...elements, element];
     setElements(newElements);
     saveNotaryElements(sessionId, newElements);
-    socket.emit("elementAdded", element);
+    if (sessionId) socket.emit("elementAdded", { sessionId, element });
   };
 
   const handleElementUpdate = (elementId, updates) => {
@@ -851,14 +854,14 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     const newElements = elements.map((el) => (el.id === elementId ? updatedElement : el));
     setElements(newElements);
     saveNotaryElements(sessionId, newElements);
-    socket.emit("elementUpdated", updatedElement);
+    if (sessionId) socket.emit("elementUpdated", { sessionId, elementId, updates });
   };
 
   const handleElementRemove = (elementId) => {
     const newElements = elements.filter((el) => el.id !== elementId);
     setElements(newElements);
     saveNotaryElements(sessionId, newElements);
-    socket.emit("elementRemoved", elementId);
+    if (sessionId) socket.emit("elementRemoved", { sessionId, elementId });
   };
 
   const handleCreateAssetBox = (x, y, width = 120, height = 80) => {
@@ -877,7 +880,7 @@ const NotaryPage = ({ sessionId: passedSessionId }) => {
     };
 
     setElements([...elements, newElement]);
-    socket.emit("elementAdded", newElement);
+    if (sessionId) socket.emit("elementAdded", { sessionId, element: newElement });
     setIsAssetBoxMode(false);
   };
 

@@ -873,16 +873,65 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       }
     };
 
+    // ✅ Real-time document upload listener
+    const onDocumentUploaded = (data) => {
+      try {
+        const { document, uploaderName } = data || {};
+        if (!document || !document.id) return;
+        
+        console.log(`📄 Real-time: Document uploaded by ${uploaderName}`);
+        setDocs((prevDocs) => {
+          const exists = prevDocs.find((d) => d.id === document.id);
+          if (exists) {
+            // Update existing document
+            return prevDocs.map((d) =>
+              d.id === document.id
+                ? { ...document, syncedWithBackend: true }
+                : d
+            );
+          } else {
+            // Add new document
+            return [...prevDocs, { ...document, syncedWithBackend: true }];
+          }
+        });
+      } catch (err) {
+        console.error('Error handling document upload event:', err);
+      }
+    };
+
+    // ✅ Real-time document review/notarization listener
+    const onDocumentReviewed = (data) => {
+      try {
+        const { document, review, reviewedBy } = data || {};
+        if (!document || !document.id) return;
+        
+        console.log(`✅ Real-time: Document ${review} by ${reviewedBy}`);
+        setDocs((prevDocs) =>
+          prevDocs.map((d) =>
+            d.id === document.id
+              ? { ...document, syncedWithBackend: true }
+              : d
+          )
+        );
+      } catch (err) {
+        console.error('Error handling document review event:', err);
+      }
+    };
+
     socket.on('notarySessionStarted', onNotarySessionStarted);
     socket.on('notarySessionEnded', onNotarySessionEnded);
     socket.on('ownerLeftSession', onOwnerLeftSession);
     socket.on('adminSessionTerminated', onAdminSessionTerminated);
+    socket.on('documentUploaded', onDocumentUploaded);
+    socket.on('documentReviewed', onDocumentReviewed);
 
     return () => {
       socket.off('notarySessionStarted', onNotarySessionStarted);
       socket.off('notarySessionEnded', onNotarySessionEnded);
       socket.off('ownerLeftSession', onOwnerLeftSession);
       socket.off('adminSessionTerminated', onAdminSessionTerminated);
+      socket.off('documentUploaded', onDocumentUploaded);
+      socket.off('documentReviewed', onDocumentReviewed);
     };
   }, [activeSessionDocId, navigate]);
 
@@ -1126,7 +1175,8 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       setSessionDocName(data.fileName || "");
     };
 
-    const onElementAdded = (element) => {
+    const onElementAdded = (data) => {
+      const element = data?.element || data;
       setEditorElements((prev) => {
         if (prev.some((existingElement) => existingElement.id === element.id)) {
           return prev;
@@ -1136,15 +1186,17 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
       });
     };
 
-    const onElementUpdated = (updatedElement) => {
+    const onElementUpdated = (data) => {
+      const { elementId, updates } = data || {};
       setEditorElements((prev) =>
         prev.map((element) =>
-          element.id === updatedElement.id ? updatedElement : element
+          element.id === elementId ? { ...element, ...updates } : element
         )
       );
     };
 
-    const onElementRemoved = (elementId) => {
+    const onElementRemoved = (data) => {
+      const { elementId } = data || {};
       setEditorElements((prev) => prev.filter((element) => element.id !== elementId));
     };
 
@@ -1389,7 +1441,7 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     setEditorElements((prev) => [...prev, element]);
     const activeDoc = docs.find((d) => d.id === activeSessionDocId);
     const sessionIdVal = resolveDocSessionId(activeDoc, activeSessions, previousSessions);
-    if (sessionIdVal) socket.emit("elementAdded", element);
+    if (sessionIdVal) socket.emit("elementAdded", { sessionId: sessionIdVal, element });
   };
 
   const handleEditorElementUpdate = (elementId, updates) => {
@@ -1400,14 +1452,14 @@ const OwnerDashboardPage = ({ setHideSidebar }) => {
     setEditorElements((prev) => prev.map((el) => (el.id === elementId ? updatedElement : el)));
     const activeDoc = docs.find((d) => d.id === activeSessionDocId);
     const sessionIdVal = resolveDocSessionId(activeDoc, activeSessions, previousSessions);
-    if (sessionIdVal) socket.emit("elementUpdated", updatedElement);
+    if (sessionIdVal) socket.emit("elementUpdated", { sessionId: sessionIdVal, elementId, updates });
   };
 
   const handleEditorElementRemove = (elementId) => {
     setEditorElements((prev) => prev.filter((el) => el.id !== elementId));
     const activeDoc = docs.find((d) => d.id === activeSessionDocId);
     const sessionIdVal = resolveDocSessionId(activeDoc, activeSessions, previousSessions);
-    if (sessionIdVal) socket.emit("elementRemoved", elementId);
+    if (sessionIdVal) socket.emit("elementRemoved", { sessionId: sessionIdVal, elementId });
   };
 
   const handleExitSession = () => {

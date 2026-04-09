@@ -112,6 +112,40 @@ const OwnerSessionPage = () => {
       navigate("/auth", { replace: true });
     };
 
+    // ✅ Real-time document upload listener
+    const onDocumentUploaded = (data) => {
+      try {
+        const { document, uploaderName } = data || {};
+        if (!document || !document.id) return;
+        console.log(`📄 Real-time: Document uploaded by ${uploaderName}`);
+        // Force refresh of document list for notary
+        if (sessionId) {
+          fetchOwnerDocuments({ sessionId }).catch((err) =>
+            console.warn("[OwnerSessionPage] Failed to refresh documents:", err?.message)
+          );
+        }
+      } catch (err) {
+        console.error('Error handling document upload event:', err);
+      }
+    };
+
+    // ✅ Real-time document review/notarization listener
+    const onDocumentReviewed = (data) => {
+      try {
+        const { document, review, reviewedBy } = data || {};
+        if (!document || !document.id) return;
+        console.log(`✅ Real-time: Document ${review} by ${reviewedBy}`);
+        // Force refresh of document list for notary
+        if (sessionId) {
+          fetchOwnerDocuments({ sessionId }).catch((err) =>
+            console.warn("[OwnerSessionPage] Failed to refresh documents:", err?.message)
+          );
+        }
+      } catch (err) {
+        console.error('Error handling document review event:', err);
+      }
+    };
+
     emitJoinSession();
 
     socket.on("connect", onConnect);
@@ -122,6 +156,8 @@ const OwnerSessionPage = () => {
     socket.on("documentPaymentRequested", onDocumentPaymentRequested);
     socket.on("ownerPaymentCompleted", onOwnerPaymentCompleted);
     socket.on("authError", onAuthError);
+    socket.on("documentUploaded", onDocumentUploaded);
+    socket.on("documentReviewed", onDocumentReviewed);
 
     return () => {
       socket.off("connect", onConnect);
@@ -132,6 +168,8 @@ const OwnerSessionPage = () => {
       socket.off("documentPaymentRequested", onDocumentPaymentRequested);
       socket.off("ownerPaymentCompleted", onOwnerPaymentCompleted);
       socket.off("authError", onAuthError);
+      socket.off("documentUploaded", onDocumentUploaded);
+      socket.off("documentReviewed", onDocumentReviewed);
     };
   }, [navigate]);
 

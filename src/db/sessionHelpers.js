@@ -7,10 +7,10 @@ const { dbGet, dbRun, persistDatabase, now } = require('./index');
 const { normalizeRole } = require('../utils/normalizers');
 const crypto = require('crypto');
 
-function upsertSessionParticipant({ sessionId, socketId, userId, username, role }) {
+async function upsertSessionParticipant({ sessionId, socketId, userId, username, role }) {
   if (!sessionId) throw new Error('sessionId required');
 
-  const existing = dbGet('SELECT * FROM sessions WHERE sessionId = :sessionId', { sessionId });
+  const existing = await dbGet('SELECT * FROM sessions WHERE sessionId = :sessionId', { sessionId });
 
   if (existing && Number(existing.terminated) === 1) {
     throw new Error('Session is terminated');
@@ -46,30 +46,36 @@ function upsertSessionParticipant({ sessionId, socketId, userId, username, role 
     notaryIds: JSON.stringify(notaryIds),
     participants: JSON.stringify(participants),
     active: 1,
+    terminated: 0,
+    startedAt: existing ? existing.startedAt : now(),
+    endedAt: existing ? existing.endedAt : null,
     createdAt: existing ? existing.createdAt : now(),
     updatedAt: now(),
   };
 
-  dbRun(
-    `INSERT INTO sessions (sessionId, ownerId, ownerUsername, notaryIds, participants, active, createdAt, updatedAt)
-     VALUES (:sessionId, :ownerId, :ownerUsername, :notaryIds, :participants, :active, :createdAt, :updatedAt)
-     ON CONFLICT(sessionId) DO UPDATE SET
-       ownerId = excluded.ownerId,
-       ownerUsername = excluded.ownerUsername,
-       notaryIds = excluded.notaryIds,
-       participants = excluded.participants,
-       active = excluded.active,
-       updatedAt = excluded.updatedAt`,
+  await dbRun(
+    `INSERT INTO sessions (sessionId, ownerId, ownerUsername, notaryIds, participants, active, terminated, startedAt, endedAt, createdAt, updatedAt)
+     VALUES (:sessionId, :ownerId, :ownerUsername, :notaryIds, :participants, :active, :terminated, :startedAt, :endedAt, :createdAt, :updatedAt)
+     ON CONFLICT (sessionId) DO UPDATE SET
+       ownerId = EXCLUDED.ownerId,
+       ownerUsername = EXCLUDED.ownerUsername,
+       notaryIds = EXCLUDED.notaryIds,
+       participants = EXCLUDED.participants,
+       active = EXCLUDED.active,
+       terminated = EXCLUDED.terminated,
+       startedAt = COALESCE(EXCLUDED.startedAt, sessions.startedAt),
+       endedAt = COALESCE(EXCLUDED.endedAt, sessions.endedAt),
+       updatedAt = EXCLUDED.updatedAt`,
     data
   );
 
-  persistDatabase();
+  await persistDatabase();
   return data;
 }
 
-function removeSessionParticipant(sessionId, socketId) {
+async function removeSessionParticipant(sessionId, socketId) {
   if (!sessionId) throw new Error('sessionId required');
-  const existing = dbGet('SELECT * FROM sessions WHERE sessionId = :sessionId', { sessionId });
+  const existing = await dbGet('SELECT * FROM sessions WHERE sessionId = :sessionId', { sessionId });
   if (!existing) return null;
 
   const participants = JSON.parse(existing.participants || '[]').filter((p) => p.socketId !== socketId);
@@ -79,21 +85,23 @@ function removeSessionParticipant(sessionId, socketId) {
 
   const signer = participants.find((p) => p.role === 'signer');
   const active = participants.length > 0 ? 1 : 0;
+  const endedAt = active === 0 ? now() : existing.endedAt;
 
-  dbRun(
-    `UPDATE sessions SET participants = :participants, notaryIds = :notaryIds, ownerId = :ownerId, ownerUsername = :ownerUsername, active = :active, updatedAt = :updatedAt WHERE sessionId = :sessionId`,
+  await dbRun(
+    `UPDATE sessions SET participants = :participants, notaryIds = :notaryIds, ownerId = :ownerId, ownerUsername = :ownerUsername, active = :active, endedAt = :endedAt, updatedAt = :updatedAt WHERE sessionId = :sessionId`,
     {
       participants: JSON.stringify(participants),
       notaryIds: JSON.stringify(notaryIds),
       ownerId: signer?.userId || null,
       ownerUsername: signer?.username || null,
       active,
+      endedAt,
       updatedAt: now(),
       sessionId,
     }
   );
 
-  persistDatabase();
+  await persistDatabase();
   return { sessionId, participants, notaryIds, ownerId: signer?.userId, ownerUsername: signer?.username, active };
 }
 
