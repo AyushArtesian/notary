@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
-const { SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS, SMTP_FROM, OTP_TTL_MS } = require('./env');
+const { SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS, SMTP_FROM, OTP_TTL_MS, NODE_ENV } = require('./env');
 
 const isValidEmailAddress = (value) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
@@ -26,6 +26,13 @@ const getSmtpTransporter = () => {
 };
 
 async function sendOtpViaEmail({ destination, code }) {
+  // Skip actual email sending in production for testing
+  if (NODE_ENV === 'production') {
+    console.log(`✅ OTP (mock for testing): ${code}`);
+    console.log(`📧 Would send to: ${destination}`);
+    return { messageId: 'mock-' + Date.now() };
+  }
+
   const transporter = getSmtpTransporter();
   const ttlMinutes = Math.max(1, Math.round(Number(OTP_TTL_MS || 10 * 60 * 1000) / 60000));
 
